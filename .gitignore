@@ -1,0 +1,8 @@
+node_modules/
+.graphify/cache/
+.graphify/branch.json
+.graphify/worktree.json
+.graphify/needs_update
+graphify-visual/
+*.log
+.DS_Store

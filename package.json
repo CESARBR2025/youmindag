@@ -1,0 +1,17 @@
+{
+  "name": "youmindag",
+  "version": "1.0.0",
+  "description": "🧠 Inyecta inteligencia de contexto a cualquier proyecto. Una línea y tu AI coding tool entiende toda la arquitectura.",
+  "bin": {
+    "youmindag": "bin/run.mjs"
+  },
+  "keywords": ["context", "ai", "opencode", "claude", "knowledge-graph", "graphify"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tuusuario/youmindag"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

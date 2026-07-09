@@ -1,0 +1,13 @@
+# Context Map — [Nombre del Proyecto]
+# Mapea cada dominio a su contexto mínimo.
+# El agente debe cargar estos archivos + ejecutar graphify query al iniciar una tarea.
+
+# Ejemplo de dominio:
+# mi-modulo:
+#   label: "Mi Módulo — Descripción breve"
+#   docs:
+#     - "boveda/🧩 Features/Mi Modulo.md"
+#   lib:
+#     - "lib/mi-modulo/"
+#   graph_query: "deps of lib/mi-modulo"
+#   troubleshoot: [ERROR_CODE_1, ERROR_CODE_2]
