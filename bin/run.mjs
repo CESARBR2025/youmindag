@@ -174,12 +174,12 @@ async function main() {
   }
 
   // Step 8: Build graph
+  const graphPath = join(CWD, '.graphify', 'graph.json')
   if (existsSync(join(CWD, 'node_modules', '@sentropic', 'graphify'))) {
     console.log(`${BOLD}🌐 Construyendo grafo de conocimiento...${RESET}`)
     try {
       execSync('npx graphify detect . 2>/dev/null', { cwd: CWD, stdio: 'pipe', timeout: 30000 })
       execSync('npx graphify update . 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 120000 })
-      const graphPath = join(CWD, '.graphify', 'graph.json')
       if (existsSync(graphPath)) {
         const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
         const nodes = graph.nodes?.length || 0
@@ -192,20 +192,19 @@ async function main() {
   }
 
   // Step 8.5: Generate studio visual
-  const graphPath = join(CWD, '.graphify', 'graph.json')
   const studioPath = join(CWD, 'graphify-visual', 'studio.html')
-  if (existsSync(graphPath) && !existsSync(studioPath)) {
-    console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
-    try {
-      execSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 60000 })
-      const htmlPath = join(CWD, 'graphify-visual', 'studio.html')
-      if (existsSync(htmlPath)) {
-        const size = Math.round(statSync(htmlPath).size / 1024)
-        console.log(`  ${GREEN}✅ Studio visual: graphify-visual/studio.html (${size} KB)${RESET}`)
-        console.log(`  ${CYAN}   📊 Abrir: open graphify-visual/studio.html${RESET}\n`)
-      }
-    } catch {
-      console.log(`  ${YELLOW}⚠️  No se pudo generar la visualización${RESET}\n`)
+  if (existsSync(graphPath)) {
+    if (!existsSync(studioPath)) {
+      console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
+      try {
+        execSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 60000 })
+      } catch { /* ignore */ }
+    }
+    if (existsSync(studioPath)) {
+      const size = Math.round(statSync(studioPath).size / 1024)
+      console.log(`  ${GREEN}✅ Studio visual (${size} KB)${RESET}`)
+      console.log(`  ${CYAN}   📊 Ruta: ${studioPath}${RESET}`)
+      console.log(`  ${CYAN}   📊 Abrir: open "${studioPath}"${RESET}\n`)
     }
   }
 
