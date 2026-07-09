@@ -135,6 +135,15 @@ async function main() {
   // Step 5: Inject scripts/
   console.log(`${BOLD}📜 Instalando scripts de utilidad...${RESET}`)
   copyDir(join(TEMPLATE, 'scripts'), join(CWD, 'scripts'))
+  // Add graphify-visual to .gitignore
+  const gitignorePath = join(CWD, '.gitignore')
+  if (existsSync(gitignorePath)) {
+    let gitignore = readFileSync(gitignorePath, 'utf-8')
+    if (!gitignore.includes('graphify-visual')) {
+      gitignore += '\n# YouMindAG — generated visual\n.graphify/cache/\n.graphify/branch.json\n.graphify/worktree.json\n.graphify/needs_update\ngraphify-visual/\n'
+      writeFileSync(gitignorePath, gitignore)
+    }
+  }
   console.log(`  ${GREEN}✅ scripts/ instalados (load-context, extract-domain, export-schema)${RESET}\n`)
 
   // Step 6: Backup + update AGENTS.md
@@ -176,6 +185,24 @@ async function main() {
       }
     } catch {
       console.log(`  ${YELLOW}⚠️  No se pudo construir el grafo automáticamente${RESET}\n`)
+    }
+  }
+
+  // Step 8.5: Generate studio visual
+  const graphPath = join(CWD, '.graphify', 'graph.json')
+  const studioPath = join(CWD, 'graphify-visual', 'studio.html')
+  if (existsSync(graphPath) && !existsSync(studioPath)) {
+    console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
+    try {
+      execSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 60000 })
+      const htmlPath = join(CWD, 'graphify-visual', 'studio.html')
+      if (existsSync(htmlPath)) {
+        const size = Math.round(statSync(htmlPath).size / 1024)
+        console.log(`  ${GREEN}✅ Studio visual: graphify-visual/studio.html (${size} KB)${RESET}`)
+        console.log(`  ${CYAN}   📊 Abrir: open graphify-visual/studio.html${RESET}\n`)
+      }
+    } catch {
+      console.log(`  ${YELLOW}⚠️  No se pudo generar la visualización${RESET}\n`)
     }
   }
 
