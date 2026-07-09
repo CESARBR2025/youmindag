@@ -13,6 +13,9 @@ const ROOT = join(__dirname, '..')
 const TEMPLATE = join(ROOT, 'template')
 const CWD = process.cwd()
 
+const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
+const VERSION = PKG.version
+
 const RESET = '\x1b[0m'
 const CYAN = '\x1b[36m'
 const GREEN = '\x1b[32m'
@@ -79,7 +82,7 @@ function pascalCase(str) {
 }
 
 async function main() {
-  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v1.0${RESET}`)
+  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
   console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
 
   // Step 1: Detect project
