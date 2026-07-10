@@ -11,6 +11,47 @@ La bóveda en `boveda/` es la única fuente de documentación. No crear document
 
 El archivo `.opencode/context-map.yaml` mapea cada dominio del proyecto a sus archivos relevantes, documentación y query de Graphify. Usarlo para cargar contexto en una tarea nueva.
 
+# Modelos recomendados
+
+La calidad del poblado automático de la bóveda (ver sección siguiente) depende del modelo AI. YouMindAG está optimizado para estos modelos (ordenados por calidad de resultado):
+
+| Modelo | Calidad esperada | Notas |
+|--------|-----------------|-------|
+| **Claude Sonnet 4** (Anthropic) | ⭐ 10/10 | Mejor seguimiento de instrucciones AGENTS.md |
+| **DeepSeek V4** | ⭐ 10/10 | Razonamiento profundo para análisis de arquitectura |
+| **GPT-4o / GPT-4.1** (OpenAI) | ⭐ 9/10 | Excelente para detección de patrones |
+| **Gemini 2.5 Pro** (Google) | ⭐ 9/10 | Muy bueno para extracción de vocabulario y glosarios |
+| Otros modelos (Llama 4, Mistral, etc.) | ⭐ 7-8/10 | Resultados funcionales pero menos precisos |
+
+El poblado factual durante install (Comandos, Librerías, Env Vars, Estructura, API Routes, Server Actions, Middleware) es 10/10 independientemente del modelo porque se genera con datos duros del proyecto.
+
+# Auto-poblado de bóveda
+
+Si al leer `boveda/` encuentras archivos con "Pendiente de documentar" o contenido placeholder, debes analizar el proyecto y llenarlos automáticamente antes de comenzar a trabajar. El objetivo es que la bóveda refleje el estado real del proyecto.
+
+Para cada sección pendiente:
+
+1. **`🏗 Arquitectura/Estructura.md`** — ✅ Ya poblado durante install con el árbol de directorios.
+2. **`🏗 Arquitectura/Middleware y Auth.md`** — ⚠️ Parcialmente poblado (archivo + librerías detectadas). Completar con análisis del flujo de autenticación, rutas protegidas, roles.
+3. **`🏗 Arquitectura/Decisiones.md`** — Crear ADRs iniciales para decisiones obvias del stack detectado (ej: "Por qué framework X", "Por qué BD Y", etc.). Si no hay decisiones claras, dejarlo como template.
+4. **`🧩 Features/Index.md`** — ✅ Ya poblado durante install con módulos detectados. Completar la descripción de cada módulo analizando su estructura y propósito.
+5. **`🧩 Features/[nombre].md`** — Para cada módulo/feature detectado, crear su archivo de documentación individual usando `Feature Example.md` como template. Usar `graphify summary` para identificar módulos.
+6. **`🛠 Stack/Comandos.md`** — ✅ Ya poblado desde package.json. Si faltan comandos, agregarlos.
+7. **`🛠 Stack/Convenciones.md`** — Inferir patrones del código existente (naming, estructura de carpetas, imports, testing, etc.). Ejecutar `graphify query "conventions and patterns"` para apoyo.
+8. **`🛠 Stack/Librerias.md`** — ✅ Ya poblado desde package.json.
+9. **`🛠 Stack/Variables de Entorno.md`** — ✅ Ya poblado desde .env si existe.
+10. **`📦 Datos/Esquema BD.md`** — Si hay base de datos, ejecutar `npm run db:schema`. Si no hay DB conectada, dejarlo como está.
+11. **`📡 API/API Routes.md`** — ✅ Ya poblado con rutas y métodos HTTP detectados. Completar descripciones de cada endpoint.
+12. **`📡 API/Server Actions.md`** — ✅ Ya poblado con archivos `"use server"` detectados. Completar descripción de cada acción.
+13. **`🗺 Roadmap/Changelog.md`** — Si hay commits recientes en git, generar un changelog inicial con `git log --oneline --max-count=30`.
+14. **`🗺 Roadmap/Pendientes.md`** — Revisar TODO/FIXME/HACK en el código, issues de git, y documentar.
+15. **`🗺 Roadmap/Troubleshooting.md`** — Si hay errores conocidos en el código o configuraciones problemáticas, documentarlos.
+16. **`📚 Referencias/Glosario.md`** — Extraer términos del dominio del código fuente. Ejecutar `graphify summary --graph .graphify/graph.json` para identificar naming consistente y extraer vocabulario del negocio.
+
+Usar `graphify query` y `graphify summary --graph .graphify/graph.json` para entender la arquitectura antes de escribir documentación. Para cambios en la bóveda, seguir las mismas convenciones de markdown que los archivos existentes.
+
+Después de poblar la bóveda, ejecutar el checklist post-cambio (sección siguiente).
+
 # Architecture — Layered Domain Pattern (si aplica)
 
 Every domain module follows a strict layered architecture in `lib/<module>/`:
