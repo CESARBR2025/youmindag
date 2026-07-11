@@ -577,7 +577,7 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
 
   // Inject .opencode/
   console.log(`${BOLD}🔧 Inyectando contexto para AI...${RESET}`)
-  copyDir(join(TEMPLATE, '.opencode'), join(cwd, '.opencode'))
+  copyDir(join(TEMPLATE, '.opencode'), join(cwd, '.opencode'), true)
   const ctxPath = join(cwd, '.opencode', 'context-map.yaml')
   if (existsSync(ctxPath)) {
     let ctx = readFileSync(ctxPath, 'utf-8')
