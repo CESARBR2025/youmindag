@@ -675,8 +675,6 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
 
 async function upgrade(oldVersion, cwd, projectName) {
   const changes = []
-  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
-  console.log(`${CYAN}  ──────────────────────────${RESET}`)
   console.log(`  ${BOLD}🔄 Upgrade:${RESET} v${oldVersion} → v${VERSION}`)
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}\n`)
 
