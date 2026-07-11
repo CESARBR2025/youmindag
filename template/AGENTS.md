@@ -22,6 +22,9 @@
 - Para investigación del código base, usar `graphify query` o subagentes. **No leer archivos masivamente.**
 - Si el contexto se compacta, ejecutar `node scripts/session-checkpoint.mjs --summary` para recuperar el hilo.
 - Monitorear presupuesto de tokens: `node scripts/session-checkpoint.mjs --budget`.
+- Si el scope de la tarea crece más de lo previsto (muchos archivos para tarea pequeña), **pausar y consultar al usuario** antes de seguir.
+- Después de 10+ file edits, ejecutar `npx graphify update` para mantener el grafo sincronizado.
+- Registrar decisiones técnicas importantes: `node scripts/session-checkpoint.mjs --decision "..."`
 
 ---
 

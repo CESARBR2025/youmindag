@@ -16,6 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const SESSION_DIR = join(ROOT, '.youmindag')
 const SESSION_FILE = join(SESSION_DIR, 'session.jsonl')
+const DECISIONS_FILE = join(SESSION_DIR, 'decisions.jsonl')
 const MAX_LINES = 500
 
 function ensureDir() {
@@ -182,6 +183,62 @@ function formatNum(n) {
   return n >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(n)
 }
 
+// ─── Decision logging ─────────────────────────────────────────────
+
+function addDecision(text) {
+  ensureDir()
+  const sessionId = getSessionId()
+  const entry = JSON.stringify({
+    ts: new Date().toISOString(),
+    sessionId,
+    text: text || '',
+  })
+  appendFileSync(DECISIONS_FILE, entry + '\n')
+}
+
+function getSessionId() {
+  if (!existsSync(SESSION_FILE)) return 'unknown'
+  try {
+    const lines = readFileSync(SESSION_FILE, 'utf-8').split('\n').filter(Boolean)
+    if (!lines.length) return 'unknown'
+    const first = parseEvent(lines[0])
+    return first ? first.ts : 'unknown'
+  } catch { return 'unknown' }
+}
+
+function pendingDecisions() {
+  if (!existsSync(DECISIONS_FILE)) return '  (sin decisiones registradas)'
+
+  const lines = readFileSync(DECISIONS_FILE, 'utf-8').split('\n').filter(Boolean)
+  if (!lines.length) return '  (sin decisiones registradas)'
+
+  const sessionId = getSessionId()
+  const decisions = lines.map(parseEvent).filter(Boolean)
+
+  // Show decisions from current session
+  const sessionDecisions = decisions.filter(d => d.sessionId === sessionId)
+
+  // Also show orphan decisions (no matching session)
+  const recent = decisions.slice(-10).filter(d => d.sessionId !== sessionId)
+
+  const toShow = [...sessionDecisions, ...recent].slice(-8)
+
+  if (!toShow.length) return '  (sin decisiones pendientes)'
+
+  let output = ''
+  for (const d of toShow) {
+    const ts = new Date(d.ts)
+    const shortText = d.text.length > 100 ? d.text.slice(0, 97) + '...' : d.text
+    const sameSession = d.sessionId === sessionId ? '📌 ' : '  '
+    output += `  ${sameSession}${formatEvent(ts, 'decision', shortText)}\n`
+  }
+  return output
+}
+
+function clearDecisions() {
+  if (existsSync(DECISIONS_FILE)) writeFileSync(DECISIONS_FILE, '')
+}
+
 // ─── CLI ──────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2)
@@ -226,13 +283,33 @@ switch (cmd) {
     process.exit(result.exitCode)
   }
 
+  case '--decision':
+    if (!args[1]) process.exit(1)
+    addDecision(args.slice(1).join(' '))
+    console.log('✅ Decisión registrada')
+    break
+
+  case '--pending-decisions': {
+    const result = pendingDecisions()
+    process.stdout.write(result + '\n')
+    break
+  }
+
+  case '--clear-decisions':
+    clearDecisions()
+    console.log('✅ Decisiones limpiadas')
+    break
+
   default:
     console.log('Uso: session-checkpoint --append "key" "text"')
     console.log('     session-checkpoint --file-read "path"')
     console.log('     session-checkpoint --last [N]')
     console.log('     session-checkpoint --summary')
     console.log('     session-checkpoint --budget [maxTokens]')
+    console.log('     session-checkpoint --decision "texto"')
+    console.log('     session-checkpoint --pending-decisions')
     console.log('     session-checkpoint --clear')
+    console.log('     session-checkpoint --clear-decisions')
     console.log()
     console.log('Keys recomendadas: task, build, typecheck, file, file_read, decision, done')
     process.exit(1)
