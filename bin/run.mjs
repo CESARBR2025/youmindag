@@ -16,6 +16,8 @@ const CWD = process.cwd()
 const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
 const VERSION = PKG.version
 
+const YOUMINDAG_JSON = '.youmindag.json'
+
 const RESET = '\x1b[0m'
 const CYAN = '\x1b[36m'
 const GREEN = '\x1b[32m'
@@ -406,17 +408,146 @@ function populateVaultFiles(cwd) {
   if (populated > 0) console.log(`  ${GREEN}✅ Bóveda auto-poblada (${populated} secciones)${RESET}\n`)
 }
 
-async function main() {
-  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
-  console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
+// ─── Delta upgrade ────────────────────────────────────────────────
 
-  // Step 1: Detect project
-  const projectName = basename(CWD)
-  const info = detectLang()
-  const pkg = existsSync(join(CWD, 'package.json'))
-  const hasGit = existsSync(join(CWD, '.git'))
-  const hasBoveda = existsSync(join(CWD, 'boveda'))
+function readYoumindagVersion(cwd) {
+  const p = join(cwd, YOUMINDAG_JSON)
+  if (!existsSync(p)) return null
+  try {
+    const data = JSON.parse(readFileSync(p, 'utf-8'))
+    return data.version || null
+  } catch { return null }
+}
 
+function writeYoumindagVersion(cwd) {
+  writeFileSync(join(cwd, YOUMINDAG_JSON), JSON.stringify({
+    version: VERSION,
+    installedAt: new Date().toISOString(),
+  }, null, 2) + '\n')
+}
+
+function upgradeAgentsMd(cwd) {
+  const agentsPath = join(cwd, 'AGENTS.md')
+  const templatePath = join(TEMPLATE, 'AGENTS.md')
+
+  if (!existsSync(agentsPath)) {
+    copyFileSync(templatePath, agentsPath)
+    return 'creado (no existía)'
+  }
+
+  if (!existsSync(templatePath)) return 'omitido (template no encontrado)'
+
+  const current = readFileSync(agentsPath, 'utf-8')
+  const template = readFileSync(templatePath, 'utf-8')
+
+  const beginMarker = '<!-- BEGIN:youmindag -->'
+  const endMarker = '<!-- END:youmindag -->'
+
+  const tBegin = template.indexOf(beginMarker)
+  const tEnd = template.indexOf(endMarker)
+  if (tBegin === -1 || tEnd === -1) return 'omitido (template sin markers)'
+
+  const newContent = template.slice(tBegin + beginMarker.length, tEnd)
+
+  // Backup
+  const backupPath = join(cwd, 'AGENTS.md.bak')
+  copyFileSync(agentsPath, backupPath)
+
+  const cBegin = current.indexOf(beginMarker)
+  const cEnd = current.indexOf(endMarker)
+
+  if (cBegin !== -1 && cEnd !== -1) {
+    // Replace content between markers, preserving anything outside
+    const updated = current.slice(0, cBegin + beginMarker.length) + newContent + current.slice(cEnd)
+    writeFileSync(agentsPath, updated)
+    return 'actualizado (merge)'
+  }
+
+  // No markers found in current → check if there's content outside template markers
+  // Write new content between markers, preserving user content outside
+  const before = cBegin !== -1 ? current.slice(0, cBegin + beginMarker.length) : ''
+  const after = cEnd !== -1 ? current.slice(cEnd) : ''
+
+  if (!before && !after) {
+    // Entire file is managed → full replace with template
+    writeFileSync(agentsPath, template)
+    return 'actualizado (reemplazo total)'
+  }
+
+  // Merge: preserve user content before/after, replace managed block
+  writeFileSync(agentsPath, before + beginMarker + newContent + endMarker + after)
+  return 'actualizado (merge + markers nuevos)'
+}
+
+function mergeContextMap(cwd) {
+  const currentPath = join(cwd, '.opencode', 'context-map.yaml')
+  const templatePath = join(TEMPLATE, '.opencode', 'context-map.yaml')
+
+  if (!existsSync(currentPath)) {
+    copyFileSync(templatePath, currentPath)
+    return 'creado (no existía)'
+  }
+  if (!existsSync(templatePath)) return 'omitido (template no encontrado)'
+
+  const current = readFileSync(currentPath, 'utf-8')
+  const template = readFileSync(templatePath, 'utf-8')
+
+  // Simple strategy: if template has new sections/keys not in current,
+  // append them at the end. Otherwise keep current as-is.
+  // This is a heuristic — full YAML deep merge would require a YAML parser.
+  const templateLines = template.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
+  const currentHasContent = current.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length > 2
+
+  if (!currentHasContent) {
+    writeFileSync(currentPath, template)
+    return 'actualizado (vacío → template)'
+  }
+
+  // Template is effectively just a header + example comments, no managed keys to merge
+  return 'sin cambios (preservado)'
+}
+
+function upgradeScriptsOpencode(cwd) {
+  const changes = []
+
+  // scripts/ — overwrite
+  const scriptsSrc = join(TEMPLATE, 'scripts')
+  const scriptsDst = join(cwd, 'scripts')
+  if (existsSync(scriptsSrc)) {
+    const before = existsSync(scriptsDst)
+    copyDir(scriptsSrc, scriptsDst, true)
+    if (before) changes.push('scripts/ actualizados')
+    else changes.push('scripts/ creados')
+  }
+
+  // .opencode/ plugins — overwrite
+  const pluginsSrc = join(TEMPLATE, '.opencode', 'plugins')
+  const pluginsDst = join(cwd, '.opencode', 'plugins')
+  if (existsSync(pluginsSrc)) {
+    copyDir(pluginsSrc, pluginsDst, true)
+    changes.push('.opencode/plugins actualizado')
+  }
+
+  // .opencode/ skills — overwrite
+  const skillsSrc = join(TEMPLATE, '.opencode', 'skills')
+  const skillsDst = join(cwd, '.opencode', 'skills')
+  if (existsSync(skillsSrc)) {
+    copyDir(skillsSrc, skillsDst, true)
+    changes.push('.opencode/skills actualizado')
+  }
+
+  // .opencode/ opencode.json — overwrite (managed)
+  const cfgSrc = join(TEMPLATE, '.opencode', 'opencode.json')
+  const cfgDst = join(cwd, '.opencode', 'opencode.json')
+  if (existsSync(cfgSrc)) {
+    copyFileSync(cfgSrc, cfgDst)
+    changes.push('.opencode/opencode.json actualizado')
+  }
+
+  return changes
+}
+
+async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema) {
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}`)
   console.log(`  ${BOLD}🔤 Lenguaje:${RESET} ${info.lang}`)
   if (info.framework !== info.lang) console.log(`  ${BOLD}⚙️  Framework:${RESET} ${info.framework}`)
@@ -424,38 +555,30 @@ async function main() {
   console.log(`  ${BOLD}🏛️  Bóveda:${RESET} ${hasBoveda ? 'Ya existe' : 'Se creará'}`)
   console.log()
 
-  // Step 2: Ask about BD
-  const hasDB = hasPostgres()
-  const wantSchema = hasDB
   if (hasDB) {
     console.log(`  ${YELLOW}📦 PostgreSQL detectado en package.json${RESET}`)
   }
   console.log()
 
-  // Step 3: Inject boveda/
+  // Inject boveda/
   if (!hasBoveda) {
     console.log(`${BOLD}📚 Creando bóveda de conocimiento...${RESET}`)
-    copyDir(join(TEMPLATE, 'boveda'), join(CWD, 'boveda'))
-    // Update Home.md with project name
-    const homePath = join(CWD, 'boveda', 'Home.md')
+    copyDir(join(TEMPLATE, 'boveda'), join(cwd, 'boveda'))
+    const homePath = join(cwd, 'boveda', 'Home.md')
     if (existsSync(homePath)) {
       let home = readFileSync(homePath, 'utf-8')
       home = home.replace('[Nombre del Proyecto]', pascalCase(projectName))
       writeFileSync(homePath, home)
     }
-    const count = readdirSync(join(CWD, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
+    const count = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
     console.log(`  ${GREEN}✅ boveda/ creada (${count} documentos)${RESET}\n`)
-
-    // Populate vault files with detected project info
-    populateVaultFiles(CWD)
+    populateVaultFiles(cwd)
   }
 
-  // Step 4: Inject .opencode/
+  // Inject .opencode/
   console.log(`${BOLD}🔧 Inyectando contexto para AI...${RESET}`)
-  copyDir(join(TEMPLATE, '.opencode'), join(CWD, '.opencode'))
-
-  // Update context-map.yaml with project name
-  const ctxPath = join(CWD, '.opencode', 'context-map.yaml')
+  copyDir(join(TEMPLATE, '.opencode'), join(cwd, '.opencode'))
+  const ctxPath = join(cwd, '.opencode', 'context-map.yaml')
   if (existsSync(ctxPath)) {
     let ctx = readFileSync(ctxPath, 'utf-8')
     ctx = ctx.replace('[Nombre del Proyecto]', pascalCase(projectName))
@@ -463,11 +586,10 @@ async function main() {
   }
   console.log(`  ${GREEN}✅ .opencode/ inyectado (plugin + skills + context-map)${RESET}\n`)
 
-  // Step 5: Inject scripts/
+  // Inject scripts/
   console.log(`${BOLD}📜 Instalando scripts de utilidad...${RESET}`)
-  copyDir(join(TEMPLATE, 'scripts'), join(CWD, 'scripts'))
-  // Add graphify-visual to .gitignore
-  const gitignorePath = join(CWD, '.gitignore')
+  copyDir(join(TEMPLATE, 'scripts'), join(cwd, 'scripts'))
+  const gitignorePath = join(cwd, '.gitignore')
   if (existsSync(gitignorePath)) {
     let gitignore = readFileSync(gitignorePath, 'utf-8')
     if (!gitignore.includes('graphify-visual')) {
@@ -477,10 +599,10 @@ async function main() {
   }
   console.log(`  ${GREEN}✅ scripts/ instalados (load-context, extract-domain, export-schema)${RESET}\n`)
 
-  // Step 6: Backup + update AGENTS.md
-  const agentsPath = join(CWD, 'AGENTS.md')
+  // Backup + update AGENTS.md
+  const agentsPath = join(cwd, 'AGENTS.md')
   if (existsSync(agentsPath)) {
-    const backupPath = join(CWD, 'AGENTS.md.bak')
+    const backupPath = join(cwd, 'AGENTS.md.bak')
     copyFileSync(agentsPath, backupPath)
     console.log(`  ${YELLOW}📄 AGENTS.md existente → respaldado como AGENTS.md.bak${RESET}`)
   }
@@ -490,24 +612,24 @@ async function main() {
     console.log(`  ${GREEN}✅ AGENTS.md actualizado${RESET}\n`)
   }
 
-  // Step 7: Install graphify
+  // Install graphify
   if (pkg) {
     console.log(`${BOLD}🔗 Instalando Graphify...${RESET}`)
     try {
-      execSync('npm install @sentropic/graphify', { cwd: CWD, stdio: 'pipe', timeout: 60000 })
+      execSync('npm install @sentropic/graphify', { cwd, stdio: 'pipe', timeout: 60000 })
       console.log(`  ${GREEN}✅ @sentropic/graphify instalado${RESET}\n`)
     } catch (e) {
       console.log(`  ${YELLOW}⚠️  No se pudo instalar graphify: ${e.message}${RESET}\n`)
     }
   }
 
-  // Step 8: Build graph
-  const graphPath = join(CWD, '.graphify', 'graph.json')
-  if (existsSync(join(CWD, 'node_modules', '@sentropic', 'graphify'))) {
+  // Build graph
+  const graphPath = join(cwd, '.graphify', 'graph.json')
+  if (existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify'))) {
     console.log(`${BOLD}🌐 Construyendo grafo de conocimiento...${RESET}`)
     try {
-      execSync('npx graphify detect . 2>/dev/null', { cwd: CWD, stdio: 'pipe', timeout: 30000 })
-      execSync('npx graphify update . 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 120000 })
+      execSync('npx graphify detect . 2>/dev/null', { cwd, stdio: 'pipe', timeout: 30000 })
+      execSync('npx graphify update . 2>&1 | tail -3', { cwd, stdio: 'pipe', timeout: 120000 })
       if (existsSync(graphPath)) {
         const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
         const nodes = graph.nodes?.length || 0
@@ -519,13 +641,13 @@ async function main() {
     }
   }
 
-  // Step 8.5: Generate studio visual
-  const studioPath = join(CWD, 'graphify-visual', 'studio.html')
+  // Studio visual
+  const studioPath = join(cwd, 'graphify-visual', 'studio.html')
   if (existsSync(graphPath)) {
     if (!existsSync(studioPath)) {
       console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
       try {
-        execSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd: CWD, stdio: 'pipe', timeout: 60000 })
+        execSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd, stdio: 'pipe', timeout: 60000 })
       } catch { /* ignore */ }
     }
     if (existsSync(studioPath)) {
@@ -536,9 +658,11 @@ async function main() {
     }
   }
 
-  // Step 9: Summary
-  const bovedaCount = readdirSync(join(CWD, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
+  // Write version
+  writeYoumindagVersion(cwd)
 
+  // Summary
+  const bovedaCount = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
   console.log(`${CYAN}${BOLD}  ──────────────────────────${RESET}`)
   console.log(`${GREEN}${BOLD}  🎉 YouMindAG activo en ${projectName}${RESET}\n`)
   console.log(`  ${BOLD}📚 Bóveda:${RESET} ${bovedaCount} documentos en boveda/`)
@@ -547,6 +671,98 @@ async function main() {
   console.log(`  ${BOLD}📜 Scripts:${RESET} load-context, extract-domain, export-schema`)
   console.log(`\n  ${CYAN}Próximo paso: abrir un chat y escribir cualquier tarea.${RESET}`)
   console.log(`  ${CYAN}El agente cargará el contexto automáticamente.${RESET}\n`)
+}
+
+async function upgrade(oldVersion, cwd, projectName) {
+  const changes = []
+  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
+  console.log(`${CYAN}  ──────────────────────────${RESET}`)
+  console.log(`  ${BOLD}🔄 Upgrade:${RESET} v${oldVersion} → v${VERSION}`)
+  console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}\n`)
+
+  const hasBoveda = existsSync(join(cwd, 'boveda'))
+
+  // 1. AGENTS.md — merge via markers
+  const agentsResult = upgradeAgentsMd(cwd)
+  changes.push(`📄 AGENTS.md — ${agentsResult}`)
+
+  // 2. Bóveda — skip (user territory)
+  if (hasBoveda) {
+    changes.push('📦 boveda/ — sin cambios (poblada por el usuario)')
+  } else {
+    console.log(`${BOLD}📚 Creando bóveda de conocimiento...${RESET}`)
+    copyDir(join(TEMPLATE, 'boveda'), join(cwd, 'boveda'))
+    const homePath = join(cwd, 'boveda', 'Home.md')
+    if (existsSync(homePath)) {
+      let home = readFileSync(homePath, 'utf-8')
+      home = home.replace('[Nombre del Proyecto]', pascalCase(projectName))
+      writeFileSync(homePath, home)
+    }
+    const count = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
+    console.log(`  ${GREEN}✅ boveda/ creada (${count} documentos)${RESET}\n`)
+    populateVaultFiles(cwd)
+    changes.push('📦 boveda/ — creada')
+  }
+
+  // 3. Scripts + .opencode — overwrite
+  mkdirSync(join(cwd, '.opencode'), { recursive: true })
+  const fileChanges = upgradeScriptsOpencode(cwd)
+  changes.push(...fileChanges.map(c => `📜 ${c}`))
+
+  // 4. context-map.yaml — merge (preserve user entries)
+  mkdirSync(join(cwd, '.opencode'), { recursive: true })
+  const ctxResult = mergeContextMap(cwd)
+  changes.push(`🔗 .opencode/context-map.yaml — ${ctxResult}`)
+
+  // 5. .gitignore — ensure entries
+  const gitignorePath = join(cwd, '.gitignore')
+  if (existsSync(gitignorePath)) {
+    let gitignore = readFileSync(gitignorePath, 'utf-8')
+    if (!gitignore.includes('graphify-visual')) {
+      gitignore += '\n# YouMindAG — generated visual\n.graphify/cache/\n.graphify/branch.json\n.graphify/worktree.json\n.graphify/needs_update\ngraphify-visual/\n'
+      writeFileSync(gitignorePath, gitignore)
+      changes.push('📂 .gitignore — entradas agregadas')
+    }
+  }
+
+  // 6. Write version
+  writeYoumindagVersion(cwd)
+
+  // Report
+  console.log(`${BOLD}\n📋 Cambios aplicados:${RESET}`)
+  for (const c of changes) {
+    console.log(`  ${GREEN}   ${c}${RESET}`)
+  }
+
+  console.log(`\n${CYAN}${BOLD}  ──────────────────────────${RESET}`)
+  console.log(`${GREEN}${BOLD}  ✅ Proyecto actualizado a v${VERSION}${RESET}\n`)
+}
+
+async function main() {
+  console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
+  console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
+
+  const projectName = basename(CWD)
+  const oldVersion = readYoumindagVersion(CWD)
+
+  if (oldVersion) {
+    if (oldVersion === VERSION) {
+      console.log(`  ${GREEN}✅ Ya estás en la última versión (v${VERSION})${RESET}`)
+      console.log(`  ${CYAN}   Para forzar reinstalación, elimina ${YOUMINDAG_JSON}${RESET}\n`)
+      return
+    }
+    // Upgrade mode
+    await upgrade(oldVersion, CWD, projectName)
+  } else {
+    // Fresh install
+    const info = detectLang()
+    const pkg = existsSync(join(CWD, 'package.json'))
+    const hasGit = existsSync(join(CWD, '.git'))
+    const hasBoveda = existsSync(join(CWD, 'boveda'))
+    const hasDB = hasPostgres()
+    const wantSchema = hasDB
+    await freshInstall(CWD, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema)
+  }
 }
 
 main().catch(e => {
