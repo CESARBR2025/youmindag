@@ -72,7 +72,7 @@ function last(n = 5) {
 }
 
 function summary() {
-  if (!existsSync(SESSION_FILE)) return '  (sin sesión registrada)\n'
+  if (!existsSync(SESSION_FILE)) return '  🔵 Sesión nueva - sin eventos registrados aún.\n  El archivo .youmindag/session.jsonl se creará automáticamente al registrar eventos.\n'
 
   const lines = readFileSync(SESSION_FILE, 'utf-8').split('\n').filter(Boolean)
   const events = lines.map(parseEvent).filter(Boolean)

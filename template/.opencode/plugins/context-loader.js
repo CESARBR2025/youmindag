@@ -12,7 +12,7 @@
 //  F7) Graphify stale guard: advierte cuando grafo no se ha actualizado tras 10+ edits
 //  D1) Pre-load enhanced: carga decisions pendientes + session summary al iniciar
 //
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
@@ -79,6 +79,33 @@ function graphifyQuery(task, directory) {
   } catch {
     return null;
   }
+}
+
+function graphifySummary(directory) {
+  if (!existsSync(GRAPH_PATH)) return null;
+  try {
+    const result = execSync(`npx graphify summary --graph "${GRAPH_PATH}" 2>/dev/null`, {
+      cwd: directory || ROOT,
+      encoding: "utf-8",
+      timeout: GRAPHIFY_TIMEOUT_MS,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    const trimmed = result.trim();
+    if (!trimmed) return null;
+    const lines = trimmed.split("\n");
+    return lines.length > 15 ? lines.slice(0, 15).join("\n") + "\n  ... (truncated)" : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+function isGenericTask(text) {
+  if (!text) return false;
+  // Short tasks or tasks with only generic action words → use summary
+  if (text.length < 30) return true;
+  const genericPatterns = /\b(implement|create|add|build|make|fix|update)\b/i;
+  const specificPatterns = /\b(auth|api|database|schema|endpoint|route|migration|component|modal|page)\b/i;
+  return genericPatterns.test(text) && !specificPatterns.test(text);
 }
 
 function checkpoint(key, text, directory) {
@@ -192,6 +219,14 @@ export const ContextLoaderPlugin = async ({ directory }) => {
       // D1: Pre-load session summary + pending decisions on first call
       if (!preLoaded) {
         preLoaded = true;
+
+        // Auto-init session file if it doesn't exist
+        const sessionDir = join(directory || ROOT, ".youmindag");
+        const sessionJson = join(sessionDir, "session.jsonl");
+        mkdirSync(sessionDir, { recursive: true });
+        if (!existsSync(sessionJson)) {
+          writeFileSync(sessionJson, "");
+        }
         let preload = "";
 
         const summary = sessionSummary(directory);
@@ -255,12 +290,19 @@ export const ContextLoaderPlugin = async ({ directory }) => {
           pendingSession = summary;
         }
 
-        // B: Graphify-first (debounced)
+        // B: Graphify-first (debounced) — use summary for generic tasks
         if (shouldShowGraphifyResult(task) && (now - lastGraphifyAt) > GRAPHIFY_DEBOUNCE_MS) {
           lastGraphifyAt = now;
-          const gfResult = graphifyQuery(task, directory);
-          if (gfResult) {
-            pendingContext = `\n[graphify] Resultados para: "${task.slice(0, 60)}${task.length > 60 ? "..." : ""}"\n${gfResult}`;
+          if (isGenericTask(task)) {
+            const gfSummary = graphifySummary(directory);
+            if (gfSummary) {
+              pendingContext = `\n[graphify summary] Orientación del proyecto:\n${gfSummary}`;
+            }
+          } else {
+            const gfResult = graphifyQuery(task, directory);
+            if (gfResult) {
+              pendingContext = `\n[graphify] Resultados para: "${task.slice(0, 60)}${task.length > 60 ? "..." : ""}"\n${gfResult}`;
+            }
           }
         }
 

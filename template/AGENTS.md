@@ -4,7 +4,8 @@
 1. 📖 **Leer AGENTS.md + `boveda/Home.md` + `.youmindag/session.jsonl`** siempre al recibir una nueva instrucción
 
 2. 🔎 **Graphify primero, grep después.** Si `.graphify/graph.json` existe:
-   - Para buscar archivos: `graphify query "..."`
+   - Para orientación rápida: `graphify summary --graph .graphify/graph.json`
+   - Para buscar archivos: `graphify query "..."` 
    - Para flujos entre módulos: `graphify path "A" "B"`
    - Si graphify no está disponible → `boveda/🏗 Arquitectura/Estructura.md` como fallback
 

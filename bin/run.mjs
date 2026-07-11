@@ -75,6 +75,49 @@ function hasPostgres() {
   } catch { return false }
 }
 
+function detectDBEngine(cwd) {
+  const pkgPath = join(cwd, 'package.json')
+  if (!existsSync(pkgPath)) return null
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies }
+    if (deps['@supabase/supabase-js']) return 'supabase'
+    if (deps.pg || deps['@neondatabase/serverless']) return 'postgres'
+    if (deps.mysql2 || deps.mysql) return 'mysql'
+    if (deps['better-sqlite3'] || deps.sqlite3) return 'sqlite'
+    if (deps.mongodb || deps.mongoose) return 'mongodb'
+    if (deps['@prisma/client']) return 'prisma'
+    if (deps['drizzle-orm']) return 'drizzle'
+  } catch {}
+  return null
+}
+
+function getDBMigrationCommands(engine) {
+  const commands = {
+    supabase: { cmd: 'npx supabase db push', desc: 'Sincroniza schema local → remoto' },
+    postgres: { cmd: 'psql $DATABASE_URL -f migrations/...', desc: 'Ejecuta archivo SQL contra PostgreSQL' },
+    mysql: { cmd: 'mysql -h $DB_HOST -u $DB_USER -p $DB_NAME < migrations/...', desc: 'Ejecuta archivo SQL contra MySQL' },
+    sqlite: { cmd: 'sqlite3 $DB_PATH < migrations/...', desc: 'Ejecuta archivo SQL contra SQLite' },
+    mongodb: { cmd: 'mongosh $MONGO_URI --eval "load(...)"', desc: 'Ejecuta script contra MongoDB' },
+    prisma: { cmd: 'npx prisma migrate dev', desc: 'Aplica migraciones de Prisma' },
+    drizzle: { cmd: 'npx drizzle-kit push', desc: 'Sincroniza schema de Drizzle' },
+  }
+  const extra = {
+    supabase: '| `npx supabase db diff` | Genera migración SQL del estado actual |',
+    prisma: '| `npx prisma db push` | Sincroniza schema sin generar migración |',
+    drizzle: '| `npx drizzle-kit generate` | Genera archivos de migración SQL |',
+  }
+  const main = commands[engine]
+  if (!main) return ''
+  let section = '\n## Migraciones DB\n\n'
+  section += `Motor detectado: **${engine}**\n\n`
+  section += `| Comando | Propósito |\n|---------|----------|\n`
+  section += `| \`${main.cmd}\` | ${main.desc} |\n`
+  if (extra[engine]) section += `${extra[engine]}\n`
+  section += '\nPara DDL manual: usar SQL Editor en el dashboard de tu proveedor de BD.\n'
+  return section
+}
+
 function pascalCase(str) {
   return str
     .replace(/[-_]/g, ' ')
@@ -96,6 +139,13 @@ function populateComandos(cwd) {
   for (const [name, cmd] of Object.entries(scripts)) {
     md += `| \`${name}\` | \`${cmd}\` |\n`
   }
+
+  // Append DB migration section if engine detected
+  const engine = detectDBEngine(cwd)
+  if (engine) {
+    md += getDBMigrationCommands(engine)
+  }
+
   writeFileSync(file, md)
   return true
 }
@@ -573,6 +623,24 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
     const count = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
     console.log(`  ${GREEN}✅ boveda/ creada (${count} documentos)${RESET}\n`)
     populateVaultFiles(cwd)
+
+    // Post-install: check if .env.example is empty or missing
+    const envExample = join(cwd, '.env.example')
+    const envFile = join(cwd, '.env')
+    const hasEnv = existsSync(envExample) || existsSync(envFile)
+    if (!hasEnv) {
+      console.log(`  ${YELLOW}💡 No se encontró .env ni .env.example${RESET}`)
+      console.log(`  ${YELLOW}   Crea un archivo .env.example con tus variables de entorno.${RESET}`)
+      const engine = detectDBEngine(cwd)
+      if (engine === 'supabase') {
+        console.log(`  ${YELLOW}   Variables comunes para Supabase:${RESET}`)
+        console.log(`  ${YELLOW}     NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co${RESET}`)
+        console.log(`  ${YELLOW}     NEXT_PUBLIC_SUPABASE_ANON_KEY=...${RESET}`)
+        console.log(`  ${YELLOW}     SUPABASE_SERVICE_ROLE_KEY=...${RESET}`)
+        console.log(`  ${YELLOW}     SUPABASE_ACCESS_TOKEN=sbp_... (para migraciones / Management API)${RESET}`)
+      }
+      console.log()
+    }
   }
 
   // Inject .opencode/
