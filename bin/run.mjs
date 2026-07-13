@@ -776,19 +776,30 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   let graphifyVersion = getGraphifyVersion(cwd)
   if (pkg) {
     console.log(`${BOLD}🔗 Instalando Graphify...${RESET}`)
-    try {
-      const graphifyPkg = graphifyVersion
-        ? `@sentropic/graphify@^${graphifyVersion}`
-        : '@sentropic/graphify'
-      maybeExecSync(`npm install ${graphifyPkg}`, { cwd, stdio: 'pipe', timeout: 60000 })
-      // Detect resolved version after install
+    const tryInstall = (pkgSpec) => {
+      try {
+        maybeExecSync(`npm install ${pkgSpec}`, { cwd, stdio: 'pipe', timeout: 60000 })
+        return true
+      } catch { return false }
+    }
+    let installed = false
+    const graphifyPkg = graphifyVersion
+      ? `@sentropic/graphify@^${graphifyVersion}`
+      : '@sentropic/graphify'
+    installed = tryInstall(graphifyPkg)
+    if (!installed && graphifyVersion) {
+      console.log(`  ${YELLOW}⚠️  Falló pin v${graphifyVersion} — reintentando con latest...${RESET}`)
+      installed = tryInstall('@sentropic/graphify')
+      if (installed) graphifyVersion = null // will detect below
+    }
+    if (installed) {
       const p = join(cwd, 'node_modules', '@sentropic', 'graphify', 'package.json')
       if (!DRY_RUN && existsSync(p)) {
         graphifyVersion = JSON.parse(readFileSync(p, 'utf-8')).version
       }
-      console.log(`  ${GREEN}✅ ${graphifyPkg} instalado${RESET}\n`)
-    } catch (e) {
-      console.log(`  ${YELLOW}⚠️  No se pudo instalar graphify: ${e.message}${RESET}\n`)
+      console.log(`  ${GREEN}✅ graphify ${graphifyVersion || ''} instalado${RESET}\n`)
+    } else {
+      console.log(`  ${YELLOW}⚠️  No se pudo instalar graphify${RESET}\n`)
     }
   }
 
@@ -1441,6 +1452,14 @@ function cmdWatch(cwd, args) {
   const usePoll = args.includes('--poll')
   let watchTimer = null
   const DEBOUNCE_MS = 500
+  const watchers = new Map()
+
+  function closeWatcher(path) {
+    if (watchers.has(path)) {
+      try { watchers.get(path).close() } catch {}
+      watchers.delete(path)
+    }
+  }
 
   function onChange() {
     if (watchTimer) clearTimeout(watchTimer)
@@ -1452,8 +1471,22 @@ function cmdWatch(cwd, args) {
   }
 
   function watchDirTree(dir) {
+    if (watchers.has(dir)) return
     try {
-      watch(dir, () => onChange())
+      const w = watch(dir, (eventType, filename) => {
+        if (eventType === 'rename' && filename) {
+          const fullPath = join(dir, filename)
+          if (existsSync(fullPath)) {
+            try {
+              if (statSync(fullPath).isDirectory()) watchDirTree(fullPath)
+            } catch {}
+          } else {
+            closeWatcher(fullPath)
+          }
+        }
+        onChange()
+      })
+      watchers.set(dir, w)
       const entries = readdirSync(dir, { withFileTypes: true })
       for (const e of entries) {
         if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
