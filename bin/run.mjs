@@ -3,10 +3,11 @@
 // Uso: npx youmindag
 // Ejecutar DENTRO del directorio del proyecto destino.
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync } from 'fs'
 import { join, dirname, basename, relative } from 'path'
 import { fileURLToPath } from 'url'
 import { execSync } from 'child_process'
+import { spawn } from 'child_process'
 import { createInterface } from 'readline'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -1004,18 +1005,322 @@ function cmdStatus(cwd) {
   console.log()
 }
 
+// ─── youmindag dev ──────────────────────────────────────────────
+
+function readYoumindagData(cwd) {
+  const p = join(cwd, YOUMINDAG_JSON)
+  if (!existsSync(p)) return {}
+  try { return JSON.parse(readFileSync(p, 'utf-8')) } catch { return {} }
+}
+
+function writeYoumindagData(cwd, data) {
+  writeFileSync(join(cwd, YOUMINDAG_JSON), JSON.stringify(data, null, 2) + '\n')
+}
+
+function findDevProcess(cwd) {
+  try {
+    const out = String(execSync('pgrep -f "next dev" 2>/dev/null || true', { cwd, encoding: 'utf-8' })).trim()
+    if (out) {
+      const pids = out.split('\n').filter(Boolean)
+      return pids[0]
+    }
+  } catch {}
+  return null
+}
+
+function cmdDev(cwd, args) {
+  const showStatus = args.includes('--status')
+  const doRestart = args.includes('--restart')
+  const showLogs = args.includes('--logs')
+  const logFile = join(cwd, '.youmindag', 'dev.log')
+
+  if (!showStatus && !doRestart && !showLogs) {
+    console.log(`${YELLOW}Uso: youmindag dev --status | --restart | --logs${RESET}\n`)
+    return
+  }
+
+  if (showLogs) {
+    if (!existsSync(logFile)) {
+      console.log(`${YELLOW}No hay logs disponibles. Inicia el dev server con --restart primero.${RESET}\n`)
+      return
+    }
+    const lines = readFileSync(logFile, 'utf-8').split('\n')
+    const tail = lines.slice(-30).join('\n')
+    console.log(`${CYAN}── Dev server logs (últimas 30 líneas) ──${RESET}\n`)
+    console.log(tail || '(vacío)')
+    console.log()
+    return
+  }
+
+  const data = readYoumindagData(cwd)
+
+  if (showStatus) {
+    const pid = data.devPid
+    if (!pid) {
+      console.log(`${YELLOW}No hay dev server registrado. Usa --restart para iniciarlo.${RESET}\n`)
+      return
+    }
+    const alive = findDevProcess(cwd)
+    if (!alive) {
+      console.log(`${YELLOW}Dev server no está corriendo (PID ${pid} no encontrado).${RESET}\n`)
+      return
+    }
+    const uptime = data.devStartedAt
+      ? Math.floor((Date.now() - new Date(data.devStartedAt).getTime()) / 1000 / 60)
+      : '?'
+    console.log(`${GREEN}✅ Dev server corriendo (PID ${pid})${RESET}`)
+    console.log(`${GREEN}   Uptime: ~${uptime} min${RESET}`)
+    console.log(`${GREEN}   Logs: ${logFile}${RESET}\n`)
+    return
+  }
+
+  if (doRestart) {
+    const existingPid = data.devPid || findDevProcess(cwd)
+    if (existingPid) {
+      try {
+        execSync(`kill -TERM ${existingPid} 2>/dev/null || true`, { cwd })
+        console.log(`${YELLOW}🔪 Dev server anterior detenido (PID ${existingPid})${RESET}`)
+      } catch {}
+      try { execSync(`kill -9 ${existingPid} 2>/dev/null || true`, { cwd }) } catch {}
+    }
+
+    mkdirSync(dirname(logFile), { recursive: true })
+    const logFd = openSync(logFile, 'w')
+    closeSync(logFd)
+
+    const pkg = existsSync(join(cwd, 'package.json'))
+      ? JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'))
+      : {}
+
+    const devCmd = pkg.scripts?.dev || 'next dev'
+
+    console.log(`${CYAN}🚀 Iniciando: npm run dev${RESET}`)
+    console.log(`${CYAN}   Logs: ${logFile}${RESET}\n`)
+
+    const child = spawn('npx', devCmd.split(' '), {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+      detached: true,
+    })
+
+    const logStream = (stream) => {
+      let buffer = ''
+      stream.on('data', (chunk) => {
+        buffer += chunk.toString()
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+        for (const line of lines) {
+          appendFileSync(logFile, `[${new Date().toISOString().slice(11, 19)}] ${line}\n`)
+        }
+      })
+      stream.on('end', () => {
+        if (buffer) appendFileSync(logFile, `[${new Date().toISOString().slice(11, 19)}] ${buffer}\n`)
+      })
+    }
+
+    logStream(child.stdout)
+    logStream(child.stderr)
+
+    data.devPid = child.pid
+    data.devStartedAt = new Date().toISOString()
+    writeYoumindagData(cwd, data)
+
+    child.unref()
+
+    setTimeout(() => {
+      console.log(`${GREEN}✅ Dev server iniciado (PID ${child.pid})${RESET}`)
+      console.log(`${GREEN}   Logs: ${logFile}${RESET}`)
+      console.log(`${CYAN}   youmindag dev --logs para ver la salida${RESET}\n`)
+    }, 2000)
+  }
+}
+
+// ─── youmindag references ────────────────────────────────────────
+
+function findProjectFiles(cwd) {
+  const searchDirs = ['app', 'lib', 'src', 'components', 'pages']
+  const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
+  const files = []
+
+  function walk(dir) {
+    if (!existsSync(dir)) return
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full)
+        } else if (extensions.has(extname(entry.name))) {
+          files.push(full)
+        }
+      }
+    } catch {}
+  }
+
+  for (const dir of searchDirs) {
+    walk(join(cwd, dir))
+  }
+  return files
+}
+
+function cmdReferences(cwd, symbol) {
+  if (!symbol) {
+    console.error(`${YELLOW}Uso: youmindag references <simbolo>${RESET}`)
+    console.error(`${YELLOW}Ej: youmindag references requireOperador${RESET}\n`)
+    process.exit(1)
+  }
+
+  console.log(`${CYAN}🔍 Buscando referencias de: ${symbol}${RESET}\n`)
+
+  const files = findProjectFiles(cwd)
+  const results = []
+
+  const wordBoundary = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+
+  for (const file of files) {
+    try {
+      const content = readFileSync(file, 'utf-8')
+      const lines = content.split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        if (wordBoundary.test(lines[i]) && !lines[i].trim().startsWith('//') && !lines[i].trim().startsWith('*')) {
+          const rel = relative(cwd, file)
+          const snippet = lines[i].trim().slice(0, 60) + (lines[i].trim().length > 60 ? '…' : '')
+          results.push({ file: rel, line: i + 1, snippet })
+        }
+      }
+    } catch {}
+  }
+
+  if (results.length === 0) {
+    console.log(`${YELLOW}No se encontraron referencias.${RESET}\n`)
+    return
+  }
+
+  const fileWidth = Math.max('Archivo'.length, ...results.map(r => r.file.length))
+  const lineWidth = Math.max('Línea'.length, ...results.map(r => String(r.line).length))
+  const snippetWidth = Math.max('Contexto'.length, ...results.map(r => r.snippet.length))
+
+  const c1 = fileWidth + 2
+  const c2 = lineWidth + 2
+  const c3 = snippetWidth + 2
+
+  let out = ''
+  out += '┌' + '─'.repeat(c1) + '┬' + '─'.repeat(c2) + '┬' + '─'.repeat(c3) + '┐\n'
+  out += '│ ' + 'Archivo'.padEnd(fileWidth) + ' │ ' + 'Línea'.padEnd(lineWidth) + ' │ ' + 'Contexto'.padEnd(snippetWidth) + ' │\n'
+  out += '├' + '─'.repeat(c1) + '┼' + '─'.repeat(c2) + '┼' + '─'.repeat(c3) + '┤\n'
+
+  for (const r of results) {
+    out += '│ ' + r.file.padEnd(fileWidth) + ' │ ' + String(r.line).padStart(lineWidth) + ' │ ' + r.snippet.padEnd(snippetWidth) + ' │\n'
+  }
+
+  out += '└' + '─'.repeat(c1) + '┴' + '─'.repeat(c2) + '┴' + '─'.repeat(c3) + '┘\n'
+  out += `\n${results.length} referencia${results.length === 1 ? '' : 's'} en ${new Set(results.map(r => r.file)).size} archivo${new Set(results.map(r => r.file)).size === 1 ? '' : 's'}\n`
+
+  process.stdout.write(out)
+}
+
+// ─── youmindag context ───────────────────────────────────────────
+
+function cmdContext(cwd, subArgs) {
+  const loadIdx = subArgs.indexOf('--load')
+  const moduleName = loadIdx !== -1 ? subArgs[loadIdx + 1] : null
+
+  if (!moduleName) {
+    console.error(`${YELLOW}Uso: youmindag context --load <modulo>${RESET}\n`)
+    process.exit(1)
+  }
+
+  console.log(`${CYAN}📋 Contexto para: ${moduleName}${RESET}\n`)
+
+  const contextMapPath = join(cwd, '.opencode', 'context-map.yaml')
+  let fromMap = false
+
+  if (existsSync(contextMapPath)) {
+    try {
+      const yaml = readFileSync(contextMapPath, 'utf-8')
+      const section = yaml.split('\n').reduce((acc, line) => {
+        if (line.match(/^\S/)) acc.current = line.trim()
+        if (acc.current && acc.current.toLowerCase().includes(moduleName.toLowerCase())) {
+          acc.lines.push(line)
+        }
+        return acc
+      }, { current: null, lines: [] })
+
+      if (section.lines.length > 0) {
+        fromMap = true
+        console.log(`${GREEN}📄 Detectado en context-map.yaml:${RESET}`)
+        for (const l of section.lines) {
+          console.log(`  ${l.trim()}`)
+        }
+        console.log()
+      }
+    } catch {}
+  }
+
+  // Heuristic fallback
+  const bovedaFile = join(cwd, 'boveda', '🧩 Features', `${moduleName}.md`)
+  if (existsSync(bovedaFile)) {
+    const lines = readFileSync(bovedaFile, 'utf-8').split('\n').length
+    console.log(`${GREEN}📄 Documentación: boveda/🧩 Features/${moduleName}.md (${lines} líneas)${RESET}`)
+  }
+
+  const srcDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
+  for (const dir of srcDirs) {
+    if (existsSync(dir)) {
+      const files = readdirSync(dir, { recursive: true }).filter(f => extname(f).match(/\.(ts|tsx|js|jsx)$/)).length
+      console.log(`${GREEN}📁 Código: ${relative(cwd, dir)}/ (${files} archivos)${RESET}`)
+    }
+  }
+
+  const appDirs = [join(cwd, 'app'), join(cwd, 'src', 'app')]
+  for (const appDir of appDirs) {
+    if (existsSync(appDir)) {
+      const matches = readdirSync(appDir, { recursive: true, withFileTypes: true })
+        .filter(e => e.isDirectory() && e.name.toLowerCase().includes(moduleName.toLowerCase()))
+      for (const m of matches) {
+        const full = join(m.parentPath || appDir, m.name)
+        console.log(`${GREEN}🖥  Vistas: ${relative(cwd, full)}/${RESET}`)
+      }
+    }
+  }
+
+  if (!fromMap) {
+    console.log(`${GREEN}🔍 Graphify: graphify query "${moduleName}"${RESET}`)
+  }
+
+  console.log(`\n${CYAN}📖 Carga sugerida para el modelo:${RESET}`)
+  if (existsSync(bovedaFile)) {
+    console.log(`  ${CYAN}1.${RESET} boveda/🧩 Features/${moduleName}.md`)
+  }
+  const codeDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
+  for (const dir of codeDirs) {
+    if (!existsSync(dir)) continue
+    const typeFile = [join(dir, 'types.ts'), join(dir, 'types.tsx')].find(f => existsSync(f))
+    const mainFile = [join(dir, 'actions.ts'), join(dir, 'service.ts'), join(dir, 'index.ts')].find(f => existsSync(f))
+    if (typeFile) console.log(`  ${CYAN}2.${RESET} ${relative(cwd, typeFile)}`)
+    if (mainFile) console.log(`  ${CYAN}3.${RESET} ${relative(cwd, mainFile)}`)
+  }
+  console.log()
+}
+
 function showHelp() {
   console.log(`\n${BOLD}${CYAN}🧠 YouMindAG v${VERSION}${RESET}`)
   console.log(`${CYAN}Inyecta inteligencia de contexto a cualquier proyecto.${RESET}\n`)
   console.log(`${BOLD}Uso:${RESET}`)
-  console.log(`  npx youmindag                        Instalar o actualizar el proyecto`)
-  console.log(`  npx youmindag db "SELECT ..."        Ejecutar query SQL contra la BD`)
-  console.log(`  npx youmindag db                     Modo interactivo REPL de BD`)
-  console.log(`  npx youmindag trace --components "A,B" Inyectar lifecycle tracker en componentes`)
-  console.log(`  npx youmindag trace --undo           Restaurar componentes originales`)
-  console.log(`  npx youmindag trace --force          Ignorar advertencia de cambios sin commit`)
-  console.log(`  npx youmindag status                 Verificar estado de la bóveda`)
-  console.log(`  npx youmindag help                   Mostrar esta ayuda`)
+  console.log(`  npx youmindag                           Instalar o actualizar el proyecto`)
+  console.log(`  npx youmindag db "SELECT ..."           Ejecutar query SQL contra la BD`)
+  console.log(`  npx youmindag db                        Modo interactivo REPL de BD`)
+  console.log(`  npx youmindag dev --status              Ver estado del servidor de desarrollo`)
+  console.log(`  npx youmindag dev --restart             Reiniciar el servidor de desarrollo`)
+  console.log(`  npx youmindag dev --logs                Ver logs del servidor de desarrollo`)
+  console.log(`  npx youmindag references <simbolo>      Buscar referencias de un símbolo en el código`)
+  console.log(`  npx youmindag context --load <modulo>   Cargar contexto de un módulo`)
+  console.log(`  npx youmindag trace --components "A,B"  Inyectar lifecycle tracker en componentes`)
+  console.log(`  npx youmindag trace --undo              Restaurar componentes originales`)
+  console.log(`  npx youmindag trace --force             Ignorar advertencia de cambios sin commit`)
+  console.log(`  npx youmindag status                    Verificar estado de la bóveda`)
+  console.log(`  npx youmindag help                      Mostrar esta ayuda`)
   console.log()
 }
 
@@ -1025,6 +1330,15 @@ async function main() {
 
   if (subcommand === 'db') {
     return cmdDb(CWD, args.slice(1).join(' ') || null)
+  }
+  if (subcommand === 'dev') {
+    return cmdDev(CWD, args.slice(1))
+  }
+  if (subcommand === 'references') {
+    return cmdReferences(CWD, args[1])
+  }
+  if (subcommand === 'context') {
+    return cmdContext(CWD, args.slice(1))
   }
   if (subcommand === 'trace') {
     return cmdTrace(CWD, args.slice(1))
