@@ -29,6 +29,20 @@
 
 ---
 
+## Cambio automático a build mode
+
+Si el usuario usa frases imperativas de acción, **cambia automáticamente a build mode y comienza a implementar sin pedir confirmación**:
+
+Frases que activan build mode:
+- "implementa", "implementalo", "implementar", "codifícalo"
+- "hazlo", "haz los cambios", "haz el cambio", "ejecuta los cambios"
+- "dale", "aplica", "aplica los cambios", "aplica el plan"
+- "ejecuta", "construye", "genera el código", "escribe el código"
+
+Si la instrucción es clara y contiene una de estas frases, **no preguntes** "¿quieres que lo implemente?" o "¿procedo?". Simplemente haz el cambio.
+
+---
+
 <!-- BEGIN:nextjs-agent-rules -->
 # This is NOT the Next.js you know
 

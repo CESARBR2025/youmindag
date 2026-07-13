@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readd
 import { join, dirname, basename, relative } from 'path'
 import { fileURLToPath } from 'url'
 import { execSync } from 'child_process'
+import { createInterface } from 'readline'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -25,6 +26,28 @@ const YELLOW = '\x1b[33m'
 const BOLD = '\x1b[1m'
 
 function log(msg) { console.log(msg) }
+
+function parseEnvFile(cwd) {
+  let envContent = null
+  for (const name of ['.env', '.env.example']) {
+    const p = join(cwd, name)
+    if (existsSync(p)) {
+      envContent = readFileSync(p, 'utf-8')
+      break
+    }
+  }
+  if (!envContent) return {}
+  const vars = {}
+  for (const line of envContent.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('#') || !trimmed) continue
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)/)
+    if (match) {
+      vars[match[1]] = match[2].replace(/^["']|["']$/g, '')
+    }
+  }
+  return vars
+}
 
 function copyDir(src, dst, overwrite = false) {
   if (!existsSync(src)) return
@@ -804,7 +827,222 @@ async function upgrade(oldVersion, cwd, projectName) {
   console.log(`${GREEN}${BOLD}  ✅ Proyecto actualizado a v${VERSION}${RESET}\n`)
 }
 
+// ─── Comandos CLI ──────────────────────────────────────────────
+
+function formatAsciiTable(rows) {
+  if (!rows || rows.length === 0) return '(sin resultados)\n'
+  const cols = Object.keys(rows[0])
+  const widths = cols.map(c => Math.max(c.length, ...rows.map(r => String(r[c] ?? 'NULL').length)))
+  const pad = (s, w) => ' ' + String(s).padEnd(w) + ' '
+
+  let result = ''
+  result += '┌' + widths.map(w => '─'.repeat(w + 2)).join('┬') + '┐\n'
+  result += '│' + cols.map((c, i) => pad(c, widths[i])).join('│') + '│\n'
+  result += '├' + widths.map(w => '─'.repeat(w + 2)).join('┼') + '┤\n'
+  for (const row of rows) {
+    result += '│' + cols.map((c, i) => pad(row[c] ?? 'NULL', widths[i])).join('│') + '│\n'
+  }
+  result += '└' + widths.map(w => '─'.repeat(w + 2)).join('┴') + '┘\n'
+  result += `\n${rows.length} ${rows.length === 1 ? 'fila' : 'filas'}\n`
+  return result
+}
+
+function replDb(pool) {
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: `${CYAN}db> ${RESET}`,
+  })
+
+  console.log(`${CYAN}Modo interactivo. Escribe una query SQL y presiona Enter.${RESET}`)
+  console.log(`${CYAN}Escribe \\q o presiona Ctrl+C para salir.${RESET}\n`)
+
+  readline.prompt()
+
+  readline.on('line', async (line) => {
+    const trimmed = line.trim()
+    if (trimmed === '\\q' || trimmed === 'exit' || trimmed === 'quit') {
+      readline.close()
+      return
+    }
+    if (!trimmed) {
+      readline.prompt()
+      return
+    }
+    try {
+      const result = await pool.query(trimmed)
+      if (result.rows && result.rows.length > 0) {
+        process.stdout.write(formatAsciiTable(result.rows))
+      } else {
+        console.log(`${GREEN}✅ Query ejecutada (${result.command}${result.rowCount !== null ? ', ' + result.rowCount + ' filas' : ''})${RESET}\n`)
+      }
+    } catch (e) {
+      console.log(`${YELLOW}Error: ${e.message}${RESET}\n`)
+    }
+    readline.prompt()
+  })
+
+  readline.on('close', async () => {
+    console.log(`\n${CYAN}👋 Saliendo...${RESET}`)
+    await pool.end()
+    process.exit(0)
+  })
+}
+
+async function cmdDb(cwd, query) {
+  const vars = parseEnvFile(cwd)
+  const dbUrl = vars.DATABASE_URL
+
+  if (!dbUrl) {
+    console.error(`${YELLOW}Error: DATABASE_URL no encontrada en .env${RESET}`)
+    console.error(`${YELLOW}   Asegúrate de tener un archivo .env con DATABASE_URL=postgres://...${RESET}`)
+    process.exit(1)
+  }
+
+  if (!hasPostgres()) {
+    console.error(`${YELLOW}Error: pg no encontrado en package.json${RESET}`)
+    console.error(`${YELLOW}   Instálalo con: npm install pg${RESET}`)
+    process.exit(1)
+  }
+
+  let pg
+  try {
+    pg = await import('pg')
+  } catch {
+    console.error(`${YELLOW}Error: No se pudo importar pg desde node_modules${RESET}`)
+    console.error(`${YELLOW}   Asegúrate de que pg esté instalado: npm install pg${RESET}`)
+    process.exit(1)
+  }
+
+  const pool = new pg.Pool({ connectionString: dbUrl })
+
+  if (!query) {
+    return replDb(pool)
+  }
+
+  try {
+    const result = await pool.query(query)
+    if (result.rows && result.rows.length > 0) {
+      process.stdout.write(formatAsciiTable(result.rows))
+    } else {
+      console.log(`${GREEN}✅ Query ejecutada (${result.command}${result.rowCount !== null ? ', ' + result.rowCount + ' filas' : ''})${RESET}`)
+    }
+  } catch (e) {
+    console.error(`${YELLOW}Error en la query: ${e.message}${RESET}`)
+    process.exit(1)
+  } finally {
+    await pool.end()
+  }
+}
+
+async function cmdTrace(cwd, args) {
+  const scriptPath = join(cwd, 'scripts', 'trace-components.mjs')
+
+  if (!existsSync(scriptPath)) {
+    console.error(`${YELLOW}Error: scripts/trace-components.mjs no encontrado${RESET}`)
+    console.error(`${YELLOW}   Ejecuta npx youmindag primero para instalar los scripts.${RESET}`)
+    process.exit(1)
+  }
+
+  try {
+    execSync(`node "${scriptPath}" ${args.join(' ')}`, { cwd, stdio: 'inherit' })
+  } catch {
+    process.exit(1)
+  }
+}
+
+function checkStaleBoveda(cwd) {
+  if (!existsSync(join(cwd, '.git'))) return
+
+  try {
+    const bovedaLog = String(execSync('git log --oneline -1 -- boveda/ 2>/dev/null || true', { cwd, encoding: 'utf-8' })).trim()
+    const srcDirs = ['app/', 'lib/', 'src/', 'components/']
+    let sourceLog = ''
+    for (const dir of srcDirs) {
+      if (existsSync(join(cwd, dir.replace('/', '')))) {
+        sourceLog = String(execSync(`git log --oneline -1 -- ${dir} 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
+        if (sourceLog) break
+      }
+    }
+
+    if (!bovedaLog || !sourceLog) return
+
+    const bovedaCommit = bovedaLog.split(' ')[0]
+    const sourceCommit = sourceLog.split(' ')[0]
+
+    if (bovedaCommit === sourceCommit) return
+
+    const countStr = String(execSync(`git rev-list --count ${bovedaCommit}..${sourceCommit} 2>/dev/null || echo 0`, { cwd, encoding: 'utf-8' })).trim()
+    const count = parseInt(countStr, 10) || 0
+
+    if (count > 0) {
+      console.log(`  ${YELLOW}⚠️  boveda/ está ${count} commit${count === 1 ? '' : 's'} atrasada respecto al código fuente${RESET}`)
+      console.log(`  ${YELLOW}   Último cambio en bóveda:  ${bovedaLog}${RESET}`)
+      console.log(`  ${YELLOW}   Último cambio en source: ${sourceLog}${RESET}`)
+      console.log()
+    }
+  } catch {}
+}
+
+function cmdStatus(cwd) {
+  console.log(`${BOLD}YouMindAG v${VERSION} — Estado${RESET}\n`)
+
+  const oldVersion = readYoumindagVersion(cwd)
+  if (oldVersion) {
+    if (oldVersion === VERSION) {
+      console.log(`  ${GREEN}✅ Versión actualizada (v${VERSION})${RESET}`)
+    } else {
+      console.log(`  ${YELLOW}⚠️  v${oldVersion} → v${VERSION} disponible${RESET}`)
+      console.log(`  ${YELLOW}   Ejecuta npx youmindag para actualizar${RESET}`)
+    }
+  } else {
+    console.log(`  ${YELLOW}⚠️  YouMindAG no instalado en este proyecto${RESET}`)
+    console.log(`  ${YELLOW}   Ejecuta npx youmindag para instalar${RESET}`)
+  }
+
+  checkStaleBoveda(cwd)
+  console.log()
+}
+
+function showHelp() {
+  console.log(`\n${BOLD}${CYAN}🧠 YouMindAG v${VERSION}${RESET}`)
+  console.log(`${CYAN}Inyecta inteligencia de contexto a cualquier proyecto.${RESET}\n`)
+  console.log(`${BOLD}Uso:${RESET}`)
+  console.log(`  npx youmindag                        Instalar o actualizar el proyecto`)
+  console.log(`  npx youmindag db "SELECT ..."        Ejecutar query SQL contra la BD`)
+  console.log(`  npx youmindag db                     Modo interactivo REPL de BD`)
+  console.log(`  npx youmindag trace --components "A,B" Inyectar lifecycle tracker en componentes`)
+  console.log(`  npx youmindag trace --undo           Restaurar componentes originales`)
+  console.log(`  npx youmindag status                 Verificar estado de la bóveda`)
+  console.log(`  npx youmindag help                   Mostrar esta ayuda`)
+  console.log()
+}
+
 async function main() {
+  const args = process.argv.slice(2)
+  const subcommand = args[0]
+
+  if (subcommand === 'db') {
+    return cmdDb(CWD, args.slice(1).join(' ') || null)
+  }
+  if (subcommand === 'trace') {
+    return cmdTrace(CWD, args.slice(1))
+  }
+  if (subcommand === 'status') {
+    return cmdStatus(CWD)
+  }
+  if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    return showHelp()
+  }
+  if (subcommand && (subcommand.startsWith('-') || subcommand.startsWith('--'))) {
+    console.error(`${YELLOW}Opción no reconocida: ${subcommand}${RESET}`)
+    console.error(`${YELLOW}Usa npx youmindag help para ver los comandos disponibles${RESET}\n`)
+    process.exit(1)
+  }
+
+  // Default: install or upgrade
+  checkStaleBoveda(CWD)
+
   console.log(`\n${CYAN}${BOLD}  🧠 YouMindAG v${VERSION}${RESET}`)
   console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
 
