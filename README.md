@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="https://img.shields.io/npm/v/youmindag?color=blue&label=npm" alt="npm version" />
+  <img src="https://img.shields.io/npm/l/youmindag" alt="license" />
+  <img src="https://img.shields.io/github/stars/CESARBR2025/youmindag?style=flat" alt="GitHub stars" />
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node version" />
+</p>
+
 # 🧠 YouMindAG
 
 > **Tu agente entiende tu proyecto.** Una línea y tu AI coding tool tiene contexto completo de arquitectura, dependencias y reglas.
@@ -51,6 +58,30 @@ npx youmindag
 - ❌ No instala dependencias adicionales (excepto `@sentropic/graphify`)
 - ❌ No rompe el build
 
+## 🔧 Comandos CLI
+
+Una vez instalado, `youmindag` ofrece estos subcomandos:
+
+| Comando | Propósito |
+|---------|-----------|
+| `youmindag` | Instalar o actualizar el proyecto |
+| `youmindag db "SELECT ..."` | Ejecutar query SQL contra la BD (tabla ASCII) |
+| `youmindag db` | Modo interactivo REPL de BD |
+| `youmindag dev --status` | Ver estado del servidor de desarrollo |
+| `youmindag dev --restart` | Reiniciar el servidor de desarrollo |
+| `youmindag dev --logs` | Ver logs del servidor de desarrollo |
+| `youmindag dev --wrap` | Envolver dev script para capturar logs automáticos |
+| `youmindag dev --unwrap` | Restaurar dev script original |
+| `youmindag trace --client "Comp"` | Rastrear hooks (useEffect/useState) en componente cliente |
+| `youmindag trace --components "A,B"` | Inyectar lifecycle tracker en componentes React |
+| `youmindag trace --server "fn1,fn2"` | Inyectar tracer en funciones server-side |
+| `youmindag trace --undo` | Restaurar todos los archivos originales |
+| `youmindag trace --force` | Ignorar advertencia de cambios sin commit |
+| `youmindag references <simbolo>` | Buscar referencias de un símbolo en el código |
+| `youmindag context --load <modulo>` | Cargar contexto de un módulo |
+| `youmindag status` | Verificar estado de la bóveda |
+| `youmindag help` | Mostrar esta ayuda |
+
 ## 🔄 Cómo funciona
 
 ```
@@ -88,7 +119,13 @@ mi-proyecto/
 │   ├── load-context.mjs
 │   ├── extract-domain.mjs
 │   ├── export-schema.mjs
-│   └── populate-vault.mjs      ← Repoblar bóveda manualmente
+│   ├── populate-vault.mjs        ← Repoblar bóveda manualmente
+│   ├── ym-dev.mjs                ← Wrapper del dev server (logs automáticos)
+│   ├── trace-utils.mjs           ← Utilidades compartidas de trace
+│   ├── trace-components.mjs      ← Lifecycle tracker para componentes React
+│   ├── trace-server.mjs          ← Tracer para server actions
+│   ├── trace-client.mjs          ← Hook shadowing para componentes cliente
+│   └── session-checkpoint.mjs    ← Recuperación de sesión
 ├── AGENTS.md                   ← Reglas + checklist
 └── .graphify/                  ← Grafo de conocimiento
 ```

@@ -1,9 +1,13 @@
 {
   "name": "youmindag",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "🧠 Inyecta inteligencia de contexto a cualquier proyecto. Una línea y tu AI coding tool entiende toda la arquitectura.",
   "bin": {
     "youmindag": "bin/run.mjs"
+  },
+  "author": {
+    "name": "César Iván Barcenas Rosales",
+    "url": "https://github.com/CESARBR2025"
   },
   "keywords": [
     "context",
@@ -18,6 +22,17 @@
     "type": "git",
     "url": "https://github.com/CESARBR2025/youmindag.git"
   },
+  "homepage": "https://github.com/CESARBR2025/youmindag#readme",
+  "bugs": {
+    "url": "https://github.com/CESARBR2025/youmindag/issues"
+  },
+  "files": [
+    "bin/",
+    "template/",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18"
   }
