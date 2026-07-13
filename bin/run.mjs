@@ -937,16 +937,19 @@ async function cmdDb(cwd, query) {
 }
 
 async function cmdTrace(cwd, args) {
-  const scriptPath = join(cwd, 'scripts', 'trace-components.mjs')
+  const isServer = args.includes('--server')
+  const scriptName = isServer ? 'trace-server.mjs' : 'trace-components.mjs'
+  const scriptPath = join(cwd, 'scripts', scriptName)
 
   if (!existsSync(scriptPath)) {
-    console.error(`${YELLOW}Error: scripts/trace-components.mjs no encontrado${RESET}`)
+    console.error(`${YELLOW}Error: scripts/${scriptName} no encontrado${RESET}`)
     console.error(`${YELLOW}   Ejecuta npx youmindag primero para instalar los scripts.${RESET}`)
     process.exit(1)
   }
 
+  const filteredArgs = args.filter(a => a !== '--server')
   try {
-    execSync(`node "${scriptPath}" ${args.join(' ')}`, { cwd, stdio: 'inherit' })
+    execSync(`node "${scriptPath}" ${filteredArgs.join(' ')}`, { cwd, stdio: 'inherit' })
   } catch {
     process.exit(1)
   }
@@ -1316,7 +1319,8 @@ function showHelp() {
   console.log(`  npx youmindag dev --logs                Ver logs del servidor de desarrollo`)
   console.log(`  npx youmindag references <simbolo>      Buscar referencias de un símbolo en el código`)
   console.log(`  npx youmindag context --load <modulo>   Cargar contexto de un módulo`)
-  console.log(`  npx youmindag trace --components "A,B"  Inyectar lifecycle tracker en componentes`)
+  console.log(`  npx youmindag trace --components "A,B"  Inyectar lifecycle tracker en UI (React)`)
+  console.log(`  npx youmindag trace --server "fn1,fn2"  Inyectar tracer en funciones server-side`)
   console.log(`  npx youmindag trace --undo              Restaurar componentes originales`)
   console.log(`  npx youmindag trace --force             Ignorar advertencia de cambios sin commit`)
   console.log(`  npx youmindag status                    Verificar estado de la bóveda`)

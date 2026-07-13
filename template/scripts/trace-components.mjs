@@ -3,52 +3,20 @@
 // Uso: node scripts/trace-components.mjs Toaster LoadingProvider
 //       node scripts/trace-components.mjs --undo
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync, readdirSync } from 'fs'
-import { join, dirname, extname } from 'path'
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'fs'
+import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { execSync } from 'child_process'
+import {
+  GREEN, YELLOW, RED, CYAN, RESET,
+  findSourceFile, checkDirtyFiles, restoreBackups,
+} from './trace-utils.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 
-const GREEN = '\x1b[32m'
-const YELLOW = '\x1b[33m'
-const RED = '\x1b[31m'
-const CYAN = '\x1b[36m'
-const RESET = '\x1b[0m'
-
 const BAK_EXT = '.trace.bak'
 const SEARCH_DIRS = ['app', 'lib', 'src', 'components']
-
-function findComponentFile(name, root) {
-  const extensions = ['.tsx', '.jsx', '.ts', '.js']
-  for (const dir of SEARCH_DIRS) {
-    const base = join(root, dir)
-    if (!existsSync(base)) continue
-    const found = searchRecursive(base, name, extensions)
-    if (found) return found
-  }
-  return null
-}
-
-function searchRecursive(dir, name, extensions) {
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true })
-    for (const e of entries) {
-      const full = join(dir, e.name)
-      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-        const result = searchRecursive(full, name, extensions)
-        if (result) return result
-      } else if (e.isFile()) {
-        const base = e.name.replace(/\.[^.]+$/, '')
-        if (base === name && extensions.includes(extname(e.name))) {
-          return full
-        }
-      }
-    }
-  } catch {}
-  return null
-}
+const EXTENSIONS = ['.tsx', '.jsx', '.ts', '.js']
 
 function injectTrace(source, componentName) {
   if (source.includes('__ymTrace')) {
@@ -149,72 +117,11 @@ function __ymTrace(Component, name) {
   return { injected: false, content }
 }
 
-function removeTrace(source) {
-  const startMarker = '// ── YouMindAG Trace'
-  const endMarker = '// ── End YouMindAG Trace'
-  const startIdx = source.indexOf(startMarker)
-  const endIdx = source.indexOf(endMarker)
-  if (startIdx === -1) return source
-
-  let content = source.slice(0, startIdx) + source.slice(endIdx + endMarker.length)
-  content = content.replace(/\n{3,}/g, '\n\n')
-  content = content.replace(
-    /\nexport default __ymTrace\((\w+),\s*'(\w+)'\)\s*\n/,
-    '\nexport default function $1 '
-  )
-
-  return content
-}
-
-function checkDirtyFiles(filePaths, root) {
-  if (!existsSync(join(root, '.git'))) return []
-
-  let dirty = []
-  try {
-    const porcelain = String(execSync('git status --porcelain', { cwd: root, encoding: 'utf-8' })).trim()
-    if (!porcelain) return []
-
-    const dirtyPaths = porcelain.split('\n').map(line => {
-      const parts = line.trim().split(/\s+/)
-      return join(root, parts[parts.length - 1])
-    })
-
-    for (const fp of filePaths) {
-      if (dirtyPaths.some(d => d === fp || fp.startsWith(d) || d.startsWith(fp))) {
-        const rel = fp.replace(root + '/', '')
-        const statusLine = porcelain.split('\n').find(l => l.includes(rel.replace(/^.*?\//, '')) || l.includes(rel))
-        dirty.push({ path: fp, rel, status: statusLine ? statusLine.trim().slice(0, 2) : '?' })
-      }
-    }
-  } catch { return [] }
-  return dirty
-}
+// ─── Main ──────────────────────────────────────────────────────
 
 if (process.argv[2] === '--undo') {
   console.log(`${CYAN}♻️  Restaurando componentes originales...${RESET}\n`)
-  let restored = 0
-  for (const dir of SEARCH_DIRS) {
-    const base = join(ROOT, dir)
-    if (!existsSync(base)) continue
-    function restoreRecursive(d) {
-      try {
-        const entries = readdirSync(d, { withFileTypes: true })
-        for (const e of entries) {
-          const full = join(d, e.name)
-          if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-            restoreRecursive(full)
-          } else if (e.name.endsWith(BAK_EXT)) {
-            const original = full.replace(BAK_EXT, '')
-            copyFileSync(full, original)
-            unlinkSync(full)
-            restored++
-            console.log(`  ${GREEN}✅ ${original.replace(ROOT + '/', '')}${RESET}`)
-          }
-        }
-      } catch {}
-    }
-    restoreRecursive(base)
-  }
+  const restored = restoreBackups(ROOT, BAK_EXT, SEARCH_DIRS)
   console.log(`\n${GREEN}✅ ${restored} archivo${restored === 1 ? '' : 's'} restaurado${restored === 1 ? '' : 's'}${RESET}\n`)
   process.exit(0)
 }
@@ -230,10 +137,9 @@ if (components.length === 0) {
 
 console.log(`${CYAN}🔍 Trace de ciclo de vida para: ${components.join(', ')}${RESET}\n`)
 
-// Phase 1: find all component files
 const fileMap = new Map()
 for (const name of components) {
-  const filePath = findComponentFile(name, ROOT)
+  const filePath = findSourceFile(name, ROOT, SEARCH_DIRS, EXTENSIONS)
   if (!filePath) {
     console.log(`  ${YELLOW}⚠️  ${name}: no encontrado${RESET}`)
     continue
@@ -241,7 +147,6 @@ for (const name of components) {
   fileMap.set(name, filePath)
 }
 
-// Phase 2: check for uncommitted changes
 const filesToModify = [...fileMap.values()]
 const dirty = checkDirtyFiles(filesToModify, ROOT)
 if (dirty.length > 0) {
@@ -258,7 +163,6 @@ if (dirty.length > 0) {
   }
 }
 
-// Phase 3: inject traces
 let traced = 0
 for (const [name, filePath] of fileMap) {
   const source = readFileSync(filePath, 'utf-8')
