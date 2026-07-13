@@ -1013,6 +1013,7 @@ function showHelp() {
   console.log(`  npx youmindag db                     Modo interactivo REPL de BD`)
   console.log(`  npx youmindag trace --components "A,B" Inyectar lifecycle tracker en componentes`)
   console.log(`  npx youmindag trace --undo           Restaurar componentes originales`)
+  console.log(`  npx youmindag trace --force          Ignorar advertencia de cambios sin commit`)
   console.log(`  npx youmindag status                 Verificar estado de la bóveda`)
   console.log(`  npx youmindag help                   Mostrar esta ayuda`)
   console.log()

@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync, readdirSync } from 'fs'
 import { join, dirname, extname } from 'path'
 import { fileURLToPath } from 'url'
+import { execSync } from 'child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -165,6 +166,30 @@ function removeTrace(source) {
   return content
 }
 
+function checkDirtyFiles(filePaths, root) {
+  if (!existsSync(join(root, '.git'))) return []
+
+  let dirty = []
+  try {
+    const porcelain = String(execSync('git status --porcelain', { cwd: root, encoding: 'utf-8' })).trim()
+    if (!porcelain) return []
+
+    const dirtyPaths = porcelain.split('\n').map(line => {
+      const parts = line.trim().split(/\s+/)
+      return join(root, parts[parts.length - 1])
+    })
+
+    for (const fp of filePaths) {
+      if (dirtyPaths.some(d => d === fp || fp.startsWith(d) || d.startsWith(fp))) {
+        const rel = fp.replace(root + '/', '')
+        const statusLine = porcelain.split('\n').find(l => l.includes(rel.replace(/^.*?\//, '')) || l.includes(rel))
+        dirty.push({ path: fp, rel, status: statusLine ? statusLine.trim().slice(0, 2) : '?' })
+      }
+    }
+  } catch { return [] }
+  return dirty
+}
+
 if (process.argv[2] === '--undo') {
   console.log(`${CYAN}♻️  Restaurando componentes originales...${RESET}\n`)
   let restored = 0
@@ -195,6 +220,7 @@ if (process.argv[2] === '--undo') {
 }
 
 const components = process.argv.slice(2).filter(a => !a.startsWith('--'))
+const forceFlag = process.argv.includes('--force')
 
 if (components.length === 0) {
   console.error(`${YELLOW}Uso: node scripts/trace-components.mjs Component1 Component2 ...${RESET}`)
@@ -203,15 +229,38 @@ if (components.length === 0) {
 }
 
 console.log(`${CYAN}🔍 Trace de ciclo de vida para: ${components.join(', ')}${RESET}\n`)
-let traced = 0
 
+// Phase 1: find all component files
+const fileMap = new Map()
 for (const name of components) {
   const filePath = findComponentFile(name, ROOT)
   if (!filePath) {
     console.log(`  ${YELLOW}⚠️  ${name}: no encontrado${RESET}`)
     continue
   }
+  fileMap.set(name, filePath)
+}
 
+// Phase 2: check for uncommitted changes
+const filesToModify = [...fileMap.values()]
+const dirty = checkDirtyFiles(filesToModify, ROOT)
+if (dirty.length > 0) {
+  if (forceFlag) {
+    console.log(`  ${YELLOW}⚠️  --force: ignorando archivos con cambios sin commitear${RESET}\n`)
+  } else {
+    console.log(`\n${RED}⚠️  Hay cambios sin commitear en archivos que serán modificados:${RESET}`)
+    for (const d of dirty) {
+      console.log(`  ${RED}   ${d.rel} (${d.status})${RESET}`)
+    }
+    console.log(`\n${YELLOW}Sugerencia: git stash o git commit antes de ejecutar trace.${RESET}`)
+    console.log(`${YELLOW}Usa --force para ignorar esta advertencia y continuar.${RESET}\n`)
+    process.exit(1)
+  }
+}
+
+// Phase 3: inject traces
+let traced = 0
+for (const [name, filePath] of fileMap) {
   const source = readFileSync(filePath, 'utf-8')
   const result = injectTrace(source, name)
 
