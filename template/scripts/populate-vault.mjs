@@ -4,7 +4,7 @@
 // Uso: node scripts/populate-vault.mjs
 // Ejecutar DENTRO del directorio del proyecto destino.
 
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs'
 import { join, dirname, basename, relative } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -14,6 +14,28 @@ const CWD = process.cwd()
 const GREEN = '\x1b[32m'
 const YELLOW = '\x1b[33m'
 const RESET = '\x1b[0m'
+
+const AUTO_START = '<!-- AUTO-GENERATED START -->'
+const AUTO_END = '<!-- AUTO-GENERATED END -->'
+
+function writeBovedaSection(filePath, newContent) {
+  const wrapped = AUTO_START + '\n' + newContent.trim() + '\n' + AUTO_END + '\n'
+  if (!existsSync(filePath)) {
+    mkdirSync(dirname(filePath), { recursive: true })
+    writeFileSync(filePath, wrapped)
+    return
+  }
+  const existing = readFileSync(filePath, 'utf-8')
+  const startIdx = existing.indexOf(AUTO_START)
+  const endIdx = existing.indexOf(AUTO_END)
+  if (startIdx !== -1 && endIdx !== -1) {
+    const before = existing.slice(0, startIdx)
+    const after = existing.slice(endIdx + AUTO_END.length)
+    writeFileSync(filePath, before + wrapped + after)
+  } else {
+    writeFileSync(filePath, wrapped)
+  }
+}
 
 function populateComandos(cwd) {
   const file = join(cwd, 'boveda', '🛠 Stack', 'Comandos.md')
@@ -27,7 +49,7 @@ function populateComandos(cwd) {
   for (const [name, cmd] of Object.entries(scripts)) {
     md += `| \`${name}\` | \`${cmd}\` |\n`
   }
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -58,7 +80,7 @@ function populateLibrerias(cwd) {
     md += '\n'
   }
 
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -97,7 +119,7 @@ function populateEnvVars(cwd) {
   for (const v of vars) {
     md += `| \`${v.key}\` | ${v.required} | ${v.desc} |\n`
   }
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -135,7 +157,7 @@ function populateEstructura(cwd) {
   if (!tree) return false
 
   const md = `# Estructura del Proyecto\n\n**Propósito**: Mapa del árbol de directorios del proyecto.\n\n---\n\n\`\`\`\n${tree}\`\`\`\n`
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -187,7 +209,7 @@ function populateAPIRoutes(cwd) {
   for (const r of allRoutes) {
     md += `| \`${r.path}\` | ${r.methods.join(', ')} | (Pendiente) |\n`
   }
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -215,7 +237,7 @@ function populateFeatures(cwd) {
   for (const m of unique) {
     md += `| ${m} | (Pendiente) | ✨ Detectado |\n`
   }
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -264,7 +286,7 @@ function populateServerActions(cwd) {
   for (const a of allActions) {
     md += `| \`${a.file}\` | ${a.functions.join(', ')} |\n`
   }
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 
@@ -309,7 +331,7 @@ function populateMiddleware(cwd) {
   }
 
   md += `(Pendiente de documentar según el proyecto)\n`
-  writeFileSync(file, md)
+  writeBovedaSection(file, md)
   return true
 }
 

@@ -28,6 +28,57 @@ const GRAPHIFY_STALE_AFTER = 10;
 const SCOPE_CREEP_THRESHOLD = 5;
 const GRAPHIFY_DEBOUNCE_MS = 30000;
 const GRAPHIFY_TIMEOUT_MS = 10000;
+const CACHE_TTL_MS = 60000;
+
+const graphifyCache = new Map()
+
+function cacheKey(task) {
+  let hash = 0
+  for (let i = 0; i < task.length; i++) {
+    hash = ((hash << 5) - hash) + task.charCodeAt(i)
+    hash |= 0
+  }
+  return hash
+}
+
+function cacheGet(task) {
+  const key = cacheKey(task)
+  const entry = graphifyCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    graphifyCache.delete(key)
+    return null
+  }
+  return entry.result
+}
+
+function cacheSet(task, result) {
+  const key = cacheKey(task)
+  graphifyCache.set(key, { result, ts: Date.now() })
+}
+
+function cacheClear() {
+  graphifyCache.clear()
+}
+
+const STATE_FILE = join(ROOT, '.youmindag', 'plugin-state.json')
+const STATE_SAVE_INTERVAL = 5
+
+function loadPluginState() {
+  if (!existsSync(STATE_FILE)) return {}
+  try {
+    return JSON.parse(readFileSync(STATE_FILE, 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+function savePluginState(state) {
+  try {
+    mkdirSync(join(ROOT, '.youmindag'), { recursive: true })
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2))
+  } catch {}
+}
 
 const GOLDEN_RULES = JSON.stringify(
   "[YouMindAG §1-4] Leer AGENTS.md + Home + session.jsonl | Graphify > grep | BD real > bóveda | Verificar cambios"
@@ -64,6 +115,8 @@ const DECISION_PATTERNS = /\b(decid[ií]|opt[aá]mos por|en vez de|la raz[oó]n 
 
 function graphifyQuery(task, directory) {
   if (!existsSync(GRAPH_PATH)) return null;
+  const cached = cacheGet(task)
+  if (cached) return cached
   try {
     const escaped = task.replace(/"/g, '\\"').slice(0, 200);
     const result = execSync(`npx graphify query "${escaped}" 2>/dev/null`, {
@@ -75,7 +128,9 @@ function graphifyQuery(task, directory) {
     const trimmed = result.trim();
     if (!trimmed) return null;
     const lines = trimmed.split("\n");
-    return lines.length > 12 ? lines.slice(0, 12).join("\n") + "\n  ... (truncated)" : trimmed;
+    const output = lines.length > 12 ? lines.slice(0, 12).join("\n") + "\n  ... (truncated)" : trimmed;
+    cacheSet(task, output)
+    return output;
   } catch {
     return null;
   }
@@ -83,6 +138,9 @@ function graphifyQuery(task, directory) {
 
 function graphifySummary(directory) {
   if (!existsSync(GRAPH_PATH)) return null;
+  const SUMMARY_KEY = "summary:__graphify_summary__"
+  const cached = cacheGet(SUMMARY_KEY)
+  if (cached) return cached
   try {
     const result = execSync(`npx graphify summary --graph "${GRAPH_PATH}" 2>/dev/null`, {
       cwd: directory || ROOT,
@@ -93,7 +151,9 @@ function graphifySummary(directory) {
     const trimmed = result.trim();
     if (!trimmed) return null;
     const lines = trimmed.split("\n");
-    return lines.length > 15 ? lines.slice(0, 15).join("\n") + "\n  ... (truncated)" : trimmed;
+    const output = lines.length > 15 ? lines.slice(0, 15).join("\n") + "\n  ... (truncated)" : trimmed;
+    cacheSet(SUMMARY_KEY, output)
+    return output;
   } catch {
     return null;
   }
@@ -196,15 +256,16 @@ function shouldShowGraphifyResult(text) {
 }
 
 export const ContextLoaderPlugin = async ({ directory }) => {
-  let toolCallCount = 0;
-  let lastTask = "";
+  const saved = loadPluginState();
+  let toolCallCount = saved.toolCallCount || 0;
+  let lastTask = saved.lastTask || "";
   let lastGraphifyAt = 0;
   let pendingContext = "";
   let pendingSession = "";
   let pendingWarnings = "";
-  let lastCheckpointKey = "";
-  let editsSinceLastCheck = 0;
-  let editsSinceGraphifyUpdate = 0;
+  let lastCheckpointKey = saved.lastCheckpointKey || "";
+  let editsSinceLastCheck = saved.editsSinceLastCheck || 0;
+  let editsSinceGraphifyUpdate = saved.editsSinceGraphifyUpdate || 0;
   let wasCompacted = false;
   let preLoaded = false;
 
@@ -215,6 +276,10 @@ export const ContextLoaderPlugin = async ({ directory }) => {
       const isNewTask = task && task !== lastTask && task.length > 15;
       const now = Date.now();
       toolCallCount++;
+
+      if (toolCallCount % STATE_SAVE_INTERVAL === 0) {
+        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate });
+      }
 
       // D1: Pre-load session summary + pending decisions on first call
       if (!preLoaded) {
@@ -276,6 +341,7 @@ export const ContextLoaderPlugin = async ({ directory }) => {
 
       if (isNewTask) {
         lastTask = task;
+        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate });
         pendingContext = "";
         pendingSession = "";
         pendingWarnings = "";
@@ -401,6 +467,7 @@ export const ContextLoaderPlugin = async ({ directory }) => {
           checkpoint("build", "graphify updated", directory);
           editsSinceLastCheck = 0;
           editsSinceGraphifyUpdate = 0;
+          cacheClear();
         }
       }
 
