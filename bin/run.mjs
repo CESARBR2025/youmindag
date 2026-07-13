@@ -1044,7 +1044,13 @@ function cmdDev(cwd, args) {
 
   if (showLogs) {
     if (!existsSync(logFile)) {
-      console.log(`${YELLOW}No hay logs disponibles. Inicia el dev server con --restart primero.${RESET}\n`)
+      const runningPid = findDevProcess(cwd)
+      if (runningPid) {
+        console.log(`${YELLOW}⚠️  next dev está corriendo (PID ${runningPid}) pero no fue iniciado por youmindag.${RESET}`)
+        console.log(`${YELLOW}   Usa youmindag dev --restart para capturar los logs automáticamente.${RESET}\n`)
+      } else {
+        console.log(`${YELLOW}No hay logs disponibles. Inicia el dev server con --restart primero.${RESET}\n`)
+      }
       return
     }
     const lines = readFileSync(logFile, 'utf-8').split('\n')
@@ -1058,22 +1064,26 @@ function cmdDev(cwd, args) {
   const data = readYoumindagData(cwd)
 
   if (showStatus) {
-    const pid = data.devPid
+    const pid = data.devPid || findDevProcess(cwd)
     if (!pid) {
-      console.log(`${YELLOW}No hay dev server registrado. Usa --restart para iniciarlo.${RESET}\n`)
+      console.log(`${YELLOW}No hay dev server corriendo. Usa --restart para iniciarlo.${RESET}\n`)
       return
     }
-    const alive = findDevProcess(cwd)
-    if (!alive) {
-      console.log(`${YELLOW}Dev server no está corriendo (PID ${pid} no encontrado).${RESET}\n`)
-      return
+
+    const alive = findDevProcess(cwd) || pid
+    let uptime = '?'
+    if (alive && data.devStartedAt) {
+      uptime = Math.floor((Date.now() - new Date(data.devStartedAt).getTime()) / 1000 / 60)
     }
-    const uptime = data.devStartedAt
-      ? Math.floor((Date.now() - new Date(data.devStartedAt).getTime()) / 1000 / 60)
-      : '?'
-    console.log(`${GREEN}✅ Dev server corriendo (PID ${pid})${RESET}`)
+
+    console.log(`${GREEN}✅ Dev server corriendo (PID ${alive})${RESET}`)
     console.log(`${GREEN}   Uptime: ~${uptime} min${RESET}`)
-    console.log(`${GREEN}   Logs: ${logFile}${RESET}\n`)
+    if (data.devPid) {
+      console.log(`${GREEN}   Logs: ${logFile}${RESET}`)
+    } else {
+      console.log(`${YELLOW}   Logs: no disponibles (inicia con --restart para capturarlos)${RESET}`)
+    }
+    console.log()
     return
   }
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
 import {
   GREEN, YELLOW, RED, CYAN, RESET,
-  findSourceFile, checkDirtyFiles, restoreBackups,
+  findSourceFile, findFunctionInContent, checkDirtyFiles, restoreBackups,
 } from './trace-utils.mjs'
 
 const require = createRequire(import.meta.url)
@@ -226,7 +226,10 @@ console.log(`${CYAN}\ud83d\udd0d Server trace para: ${fnNames.join(', ')}${RESET
 
 const fileMap = new Map()
 for (const name of fnNames) {
-  const filePath = findSourceFile(name, ROOT, SEARCH_DIRS, EXTENSIONS)
+  let filePath = findSourceFile(name, ROOT, SEARCH_DIRS, EXTENSIONS)
+  if (!filePath) {
+    filePath = findFunctionInContent(name, ROOT, SEARCH_DIRS, new Set(EXTENSIONS))
+  }
   if (!filePath) {
     console.log(`  ${YELLOW}\u26a0\ufe0f  ${name}: no encontrado${RESET}`)
     continue

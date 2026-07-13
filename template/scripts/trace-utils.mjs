@@ -1,7 +1,7 @@
 // scripts/trace-utils.mjs
 // Utilidades compartidas por trace-components.mjs y trace-server.mjs
 
-import { existsSync, copyFileSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, copyFileSync, unlinkSync, readdirSync, readFileSync } from 'fs'
 import { join, extname } from 'path'
 import { execSync } from 'child_process'
 
@@ -92,4 +92,42 @@ export function restoreBackups(root, bakExt, searchDirs) {
     } catch {}
   }
   return restored
+}
+
+export function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function walkRecursive(dir, extensions, maxDepth = 20) {
+  const files = []
+  function walk(d, depth) {
+    if (depth > maxDepth) return
+    try {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === '.next') continue
+        const full = join(d, e.name)
+        if (e.isDirectory()) {
+          walk(full, depth + 1)
+        } else if (extensions.has(extname(e.name))) {
+          files.push(full)
+        }
+      }
+    } catch {}
+  }
+  walk(dir, 0)
+  return files
+}
+
+export function findFunctionInContent(name, root, searchDirs, extensions) {
+  const pat = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${escapeRegex(name)}\\s*\\(|const\\s+${escapeRegex(name)}\\s*[=:]`)
+  for (const dir of searchDirs) {
+    const base = join(root, dir)
+    if (!existsSync(base)) continue
+    for (const file of walkRecursive(base, extensions)) {
+      try {
+        if (pat.test(readFileSync(file, 'utf-8'))) return file
+      } catch {}
+    }
+  }
+  return null
 }
