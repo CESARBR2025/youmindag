@@ -760,7 +760,10 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   console.log(`  ${BOLD}📚 Bóveda:${RESET} ${bovedaCount} documentos en boveda/`)
   console.log(`  ${BOLD}🔧 Contexto:${RESET} Plugin + skills + context-map`)
   console.log(`  ${BOLD}🌐 Grafo:${RESET} Graphify indexando el código`)
-  console.log(`  ${BOLD}📜 Scripts:${RESET} load-context, extract-domain, export-schema`)
+  console.log(`  ${BOLD}📜 Scripts:${RESET} load-context, extract-domain, export-schema, ym-dev, trace-*`)
+  if (!isDevScriptWrapped(cwd)) {
+    console.log(`  ${YELLOW}💡 Recomendación: youmindag dev --wrap para capturar logs del dev server automáticamente${RESET}`)
+  }
   console.log(`\n  ${CYAN}Próximo paso: abrir un chat y escribir cualquier tarea.${RESET}`)
   console.log(`  ${CYAN}El agente cargará el contexto automáticamente.${RESET}\n`)
 }
@@ -822,6 +825,10 @@ async function upgrade(oldVersion, cwd, projectName) {
   console.log(`${BOLD}\n📋 Cambios aplicados:${RESET}`)
   for (const c of changes) {
     console.log(`  ${GREEN}   ${c}${RESET}`)
+  }
+
+  if (!isDevScriptWrapped(cwd)) {
+    console.log(`  ${YELLOW}💡 youmindag dev --wrap para capturar logs del dev server automáticamente${RESET}`)
   }
 
   console.log(`\n${CYAN}${BOLD}  ──────────────────────────${RESET}`)
@@ -937,8 +944,9 @@ async function cmdDb(cwd, query) {
 }
 
 async function cmdTrace(cwd, args) {
+  const isClient = args.includes('--client')
   const isServer = args.includes('--server')
-  const scriptName = isServer ? 'trace-server.mjs' : 'trace-components.mjs'
+  const scriptName = isClient ? 'trace-client.mjs' : isServer ? 'trace-server.mjs' : 'trace-components.mjs'
   const scriptPath = join(cwd, 'scripts', scriptName)
 
   if (!existsSync(scriptPath)) {
@@ -947,7 +955,7 @@ async function cmdTrace(cwd, args) {
     process.exit(1)
   }
 
-  const filteredArgs = args.filter(a => a !== '--server')
+  const filteredArgs = args.filter(a => a !== '--server' && a !== '--client')
   try {
     execSync(`node "${scriptPath}" ${filteredArgs.join(' ')}`, { cwd, stdio: 'inherit' })
   } catch {
@@ -1008,6 +1016,57 @@ function cmdStatus(cwd) {
   console.log()
 }
 
+// ─── Dev script wrapper ─────────────────────────────────────────
+
+function isDevScriptWrapped(cwd) {
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'))
+    return (pkg.scripts?.dev || '').startsWith('node scripts/ym-dev.mjs')
+  } catch { return false }
+}
+
+function wrapDevScript(cwd) {
+  const pkgPath = join(cwd, 'package.json')
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+  const original = pkg.scripts?.dev
+  if (!original) {
+    console.log(`  ${YELLOW}⚠️  No se encontró un script "dev" en package.json${RESET}\n`)
+    return false
+  }
+  if (original.startsWith('node scripts/ym-dev.mjs')) {
+    console.log(`  ${YELLOW}⚠️  El dev script ya está envuelto${RESET}\n`)
+    return false
+  }
+
+  mkdirSync(join(cwd, '.youmindag'), { recursive: true })
+  writeFileSync(join(cwd, '.youmindag', 'dev-original.txt'), original + '\n')
+  pkg.scripts.dev = 'node scripts/ym-dev.mjs'
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+  console.log(`  ${GREEN}✅ Dev script envuelto${RESET}`)
+  console.log(`  ${CYAN}   Original: ${original}${RESET}`)
+  console.log(`  ${CYAN}   Los logs se capturarán automáticamente en .youmindag/dev.log${RESET}\n`)
+  return true
+}
+
+function unwrapDevScript(cwd) {
+  const origPath = join(cwd, '.youmindag', 'dev-original.txt')
+  if (!existsSync(origPath)) {
+    console.log(`  ${YELLOW}⚠️  No hay dev script envuelto (falta .youmindag/dev-original.txt)${RESET}\n`)
+    return false
+  }
+
+  const pkgPath = join(cwd, 'package.json')
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+  const original = readFileSync(origPath, 'utf-8').trim()
+
+  pkg.scripts.dev = original
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+  try { execSync(`rm "${origPath}"`, { cwd }) } catch {}
+  console.log(`  ${GREEN}✅ Dev script restaurado${RESET}`)
+  console.log(`  ${CYAN}   Script: ${original}${RESET}\n`)
+  return true
+}
+
 // ─── youmindag dev ──────────────────────────────────────────────
 
 function readYoumindagData(cwd) {
@@ -1035,7 +1094,12 @@ function cmdDev(cwd, args) {
   const showStatus = args.includes('--status')
   const doRestart = args.includes('--restart')
   const showLogs = args.includes('--logs')
+  const doWrap = args.includes('--wrap')
+  const doUnwrap = args.includes('--unwrap')
   const logFile = join(cwd, '.youmindag', 'dev.log')
+
+  if (doWrap) return wrapDevScript(cwd)
+  if (doUnwrap) return unwrapDevScript(cwd)
 
   if (!showStatus && !doRestart && !showLogs) {
     console.log(`${YELLOW}Uso: youmindag dev --status | --restart | --logs${RESET}\n`)
@@ -1083,6 +1147,8 @@ function cmdDev(cwd, args) {
     } else {
       console.log(`${YELLOW}   Logs: no disponibles (inicia con --restart para capturarlos)${RESET}`)
     }
+    const isWrapped = isDevScriptWrapped(cwd)
+    console.log(`${isWrapped ? GREEN : YELLOW}   Dev script: ${isWrapped ? 'envuelto (logs automáticos)' : 'no envuelto (youmindag dev --wrap)'}${RESET}`)
     console.log()
     return
   }
@@ -1327,11 +1393,14 @@ function showHelp() {
   console.log(`  npx youmindag dev --status              Ver estado del servidor de desarrollo`)
   console.log(`  npx youmindag dev --restart             Reiniciar el servidor de desarrollo`)
   console.log(`  npx youmindag dev --logs                Ver logs del servidor de desarrollo`)
+  console.log(`  npx youmindag dev --wrap                Envolver dev script para capturar logs automáticos`)
+  console.log(`  npx youmindag dev --unwrap              Restaurar dev script original`)
   console.log(`  npx youmindag references <simbolo>      Buscar referencias de un símbolo en el código`)
   console.log(`  npx youmindag context --load <modulo>   Cargar contexto de un módulo`)
+  console.log(`  npx youmindag trace --client "Comp"     Rastrear hooks (useEffect/useState) en componente cliente`)
   console.log(`  npx youmindag trace --components "A,B"  Inyectar lifecycle tracker en UI (React)`)
   console.log(`  npx youmindag trace --server "fn1,fn2"  Inyectar tracer en funciones server-side`)
-  console.log(`  npx youmindag trace --undo              Restaurar componentes originales`)
+  console.log(`  npx youmindag trace --undo              Restaurar todos los archivos originales`)
   console.log(`  npx youmindag trace --force             Ignorar advertencia de cambios sin commit`)
   console.log(`  npx youmindag status                    Verificar estado de la bóveda`)
   console.log(`  npx youmindag help                      Mostrar esta ayuda`)
