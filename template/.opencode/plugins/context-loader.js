@@ -30,6 +30,7 @@ const GRAPHIFY_DEBOUNCE_MS = 30000;
 const GRAPHIFY_TIMEOUT_MS = 10000;
 const CACHE_TTL_MS = 60000;
 
+const YM_DEBUG = process.env.YOUMINDAG_DEBUG === "1";
 const graphifyCache = new Map()
 
 function cacheKey(task) {
@@ -328,6 +329,9 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
   return {
     "chat.message": async (input, output) => {
       if (!primarySessionID) primarySessionID = input.sessionID;
+      if (YM_DEBUG) {
+        console.error(`[YM-DEBUG] chat.message sid:${input.sessionID} primary:${primarySessionID} match:${input.sessionID === primarySessionID}`);
+      }
       if (input.sessionID !== primarySessionID) return;
       const textParts = (output.parts || [])
         .filter(p => p.type === "text")
@@ -354,12 +358,21 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
       }
 
       // ─── E1: Subagent graphify context injection ───
+      if (toolName === "task" && YM_DEBUG) {
+        console.error(`[YM-DEBUG] task tool detectado, prompt_len:${output.args?.prompt?.length} graphify_disponible:${isGraphifyAvailable()}`);
+      }
       if (toolName === "task" && output.args?.prompt?.length > 20 && isGraphifyAvailable()) {
         const subPrompt = output.args.prompt;
         const keywords = extractKeywords(subPrompt);
+        if (YM_DEBUG) {
+          console.error(`[YM-DEBUG] keywords:${JSON.stringify(keywords)}`);
+        }
         if (keywords.length > 0) {
           const compoundQuery = buildGraphifyQuery(subPrompt, keywords);
           const gfResult = graphifyQuery(compoundQuery, directory);
+          if (YM_DEBUG) {
+            console.error(`[YM-DEBUG] gfResult:${gfResult ? "SI len=" + gfResult.length : "NO"}`);
+          }
           if (gfResult) {
             graphifyQueryCount++;
             output.args.prompt = [
