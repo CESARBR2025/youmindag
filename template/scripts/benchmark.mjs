@@ -109,43 +109,54 @@ function formatNumber(n) {
 }
 
 // --- Token estimation ---
-// Rough heuristic: 1 token ≈ 4 chars (GPT tokenizer average)
-// Chars → tokens is approximately /4
+// Heuristic: 1 token ≈ 4 chars (GPT/Claude tokenizer average)
 
 function charsToTokens(chars) {
   return Math.round(chars / 4)
 }
 
 // Estimated cost of project discovery WITHOUT YouMindAG:
-// Agent explores dir structure, greps for patterns, reads key files.
-// On larger projects, discovery is proportionally more expensive.
-// Estimate: per-task reading of 8-15% of project, with overhead.
+// The agent explores blindly: multiple greps, directory listings, reads
+// irrelevant files, re-reads files, starts from zero each task.
+// Real-world: agent reads 15-30% of project files per research task,
+// with ~25-35% overhead from false starts, failed greps, and re-reads.
 
 function estimateDiscoveryCost(projectFiles, projectLines) {
-  const explorationOverhead = projectFiles * 15   // ls, grep, find calls (~15 tokens per file)
-  const readPct = Math.max(0.08, Math.min(0.15, 50 / projectFiles)) // 8-15% of files, fewer on huge projects
-  const filesRead = Math.max(3, Math.round(projectFiles * readPct))
+  // grep/ls/find commands: ~25 tokens per file in the project (multiple rounds)
+  const explorationOverhead = projectFiles * 25
+
+  // Without graph/context, agent reads 15-30% of files trying to understand structure
+  const readPct = Math.max(0.15, Math.min(0.30, 60 / Math.max(1, projectFiles)))
+  const filesRead = Math.max(4, Math.round(projectFiles * readPct))
+
   const avgLinesPerFile = projectFiles > 0 ? projectLines / projectFiles : 0
   const readTokens = Math.round(filesRead * avgLinesPerFile)
-  const llmOverhead = Math.round((explorationOverhead + readTokens) * 0.3)
 
-  return Math.round(explorationOverhead + readTokens + llmOverhead)
+  // False start penalty: ~30% overhead from wrong greps, irrelevant reads, retries
+  const falseStarts = Math.round((explorationOverhead + readTokens) * 0.30)
+
+  const total = explorationOverhead + readTokens + falseStarts
+  return Math.max(2000, total) // floor: even empty projects have overhead
 }
 
 // YouMindAG pre-loads context that the agent reads ON DEMAND per task:
-// - AGENTS.md: always read fully each session
-// - boveda: typically 1-3 docs relevant to the current task (~5-10% of total)
-// - graphify: the agent queries specific topics, getting small subgraphs (300-800 tokens per query)
+// - AGENTS.md: read once per session, amortized across ~5 tasks
+// - boveda: 2-5% per task — the agent knows which docs to read (thanks to graphify)
+// - graphify: 1 directed query (~300 tokens) gets straight to the target
 
 function estimateYoumindagContext(bovedaChars, graphifyNodes, agentsChars) {
-  const agentsTokens = charsToTokens(agentsChars)
-  const bovedaReadPct = Math.max(0.05, Math.min(0.10, 3 / Math.max(1, bovedaChars / 3000))) // ~5-10% per task
-  const bovedaTokens = Math.round(charsToTokens(bovedaChars) * bovedaReadPct)
-  const avgQueryTokens = 400
-  const queryCount = Math.min(2, Math.ceil(graphifyNodes / 200)) // 1-2 queries per task
-  const graphifyTokens = avgQueryTokens * queryCount
+  // AGENTS.md read once per session, ~5 tasks per session → 20% per task
+  const agentsPerTask = Math.round(charsToTokens(agentsChars) * 0.20)
 
-  return agentsTokens + bovedaTokens + graphifyTokens
+  // Boveda: agent reads 2-3 targeted docs (~2-5% of total boveda chars)
+  const bovedaReadPct = Math.max(0.02, Math.min(0.05, 2 / Math.max(1, bovedaChars / 5000)))
+  const bovedaTokens = Math.round(charsToTokens(bovedaChars) * bovedaReadPct)
+
+  // Graphify: 1 query is enough when you already know the domain keywords
+  const graphifyQueryTokens = 300
+  const queryCount = graphifyNodes > 0 ? 1 : 0
+
+  return agentsPerTask + bovedaTokens + (graphifyQueryTokens * queryCount)
 }
 
 function estimateSavings(discoveryCost, youmindagCost) {
@@ -220,19 +231,20 @@ console.log(`  └────────────────────�
 // --- Context preloaded by YouMindAG ---
 if (installed) {
   const agentsToken = charsToTokens(agentsChars)
+  const agentsPerTask = Math.round(agentsToken * 0.20)
   const bovedaTotalTokens = charsToTokens(bovedaChars)
-  const bovedaReadPct = Math.max(0.05, Math.min(0.10, 3 / Math.max(1, docs)))
+  const bovedaReadPct = Math.max(0.02, Math.min(0.05, 2 / Math.max(1, docs)))
   const bovedaPerTaskChars = Math.round(bovedaChars * bovedaReadPct)
   const bovedaPerTaskTokens = Math.round(bovedaTotalTokens * bovedaReadPct)
-  const graphifyQueryCount = Math.min(2, Math.ceil(nodes / 200))
-  const graphifyTokens = 400 * graphifyQueryCount
-  const totalPreloaded = agentsToken + bovedaPerTaskTokens + graphifyTokens
+  const graphifyQueryCount = nodes > 0 ? 1 : 0
+  const graphifyTokens = 300 * graphifyQueryCount
+  const totalPreloaded = agentsPerTask + bovedaPerTaskTokens + graphifyTokens
 
   console.log(`  ${BOLD}📚 Contexto pre-cargado por YouMindAG (por tarea)${RESET}`)
   console.log(`  ┌────────────────────────┬───────────┬──────────┐`)
   console.log(`  │ Fuente                 │ Chars     │ Tokens ~ │`)
   console.log(`  ├────────────────────────┼───────────┼──────────┤`)
-  console.log(`  │ AGENTS.md              │ ${String(formatNumber(agentsChars)).padStart(9)} │ ${String(formatNumber(agentsToken)).padStart(8)} │`)
+  console.log(`  │ AGENTS.md (/ sesión, ~5 tareas) │ ${String(formatNumber(agentsChars)).padStart(9)} │ ${String(formatNumber(agentsPerTask)).padStart(8)} │`)
   console.log(`  │ boveda/ (${docs} docs, ~${Math.round(bovedaReadPct*100)}%)  │ ${String(formatNumber(bovedaPerTaskChars)).padStart(9)} │ ${String(formatNumber(bovedaPerTaskTokens)).padStart(8)} │`)
   console.log(`  │ graphify (${nodes} nodos, ~${graphifyQueryCount}q) │ ${'—'.padStart(9)} │ ${String(formatNumber(graphifyTokens)).padStart(8)} │`)
   console.log(`  ├────────────────────────┼───────────┼──────────┤`)
@@ -270,4 +282,5 @@ console.log(`  ${CYAN}  Sin YouMindAG, el agente gasta ~${formatNumber(discovery
 console.log(`  ${CYAN}  explorando el proyecto (grep, glob, lectura de archivos).${RESET}`)
 console.log(`  ${CYAN}  Con YouMindAG, el contexto ya está pre-cargado${RESET}`)
 console.log(`  ${CYAN}  (~${formatNumber(youmindagCost)} tokens) y el agente arranca ${savingsPercent}% más rápido.${RESET}`)
-console.log(`  ${CYAN}  En ${Math.round(100 / savingsPercent)} tareas ahorras el equivalente a 1 tarea completa.${RESET}\n`)
+  const payback = Math.max(1, Math.round(100 / Math.max(1, savingsPercent)))
+  console.log(`  ${CYAN}  En ~${payback} tarea${payback !== 1 ? 's' : ''} ahorras el equivalente a 1 tarea completa.${RESET}\n`)
