@@ -12,7 +12,7 @@
 //  F7) Graphify stale guard: advierte cuando grafo no se ha actualizado tras 10+ edits
 //  D1) Pre-load enhanced: carga decisions pendientes + session summary al iniciar
 //
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
@@ -30,7 +30,19 @@ const GRAPHIFY_DEBOUNCE_MS = 30000;
 const GRAPHIFY_TIMEOUT_MS = 10000;
 const CACHE_TTL_MS = 60000;
 
-const YM_DEBUG = process.env.YOUMINDAG_DEBUG === "1";
+const YM_LOG = process.env.YOUMINDAG_DEBUG === "1"
+  ? join(ROOT, ".youmindag", "ym-debug.log")
+  : null;
+const YM_DEBUG = !!YM_LOG;
+
+function ymDebug(msg) {
+  if (!YM_LOG) return;
+  try {
+    mkdirSync(join(ROOT, ".youmindag"), { recursive: true });
+    appendFileSync(YM_LOG, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {}
+}
+
 const graphifyCache = new Map()
 
 function cacheKey(task) {
@@ -330,7 +342,7 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
     "chat.message": async (input, output) => {
       if (!primarySessionID) primarySessionID = input.sessionID;
       if (YM_DEBUG) {
-        console.error(`[YM-DEBUG] chat.message sid:${input.sessionID} primary:${primarySessionID} match:${input.sessionID === primarySessionID}`);
+        ymDebug(`chat.message sid:${input.sessionID} primary:${primarySessionID} match:${input.sessionID === primarySessionID}`);
       }
       if (input.sessionID !== primarySessionID) return;
       const textParts = (output.parts || [])
@@ -359,19 +371,19 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
 
       // ─── E1: Subagent graphify context injection ───
       if (toolName === "task" && YM_DEBUG) {
-        console.error(`[YM-DEBUG] task tool detectado, prompt_len:${output.args?.prompt?.length} graphify_disponible:${isGraphifyAvailable()}`);
+        ymDebug(`task tool detectado, prompt_len:${output.args?.prompt?.length} graphify_disponible:${isGraphifyAvailable()}`);
       }
       if (toolName === "task" && output.args?.prompt?.length > 20 && isGraphifyAvailable()) {
         const subPrompt = output.args.prompt;
         const keywords = extractKeywords(subPrompt);
         if (YM_DEBUG) {
-          console.error(`[YM-DEBUG] keywords:${JSON.stringify(keywords)}`);
+          ymDebug(`keywords:${JSON.stringify(keywords)}`);
         }
         if (keywords.length > 0) {
           const compoundQuery = buildGraphifyQuery(subPrompt, keywords);
           const gfResult = graphifyQuery(compoundQuery, directory);
           if (YM_DEBUG) {
-            console.error(`[YM-DEBUG] gfResult:${gfResult ? "SI len=" + gfResult.length : "NO"}`);
+            ymDebug(`gfResult:${gfResult ? "SI len=" + gfResult.length : "NO"}`);
           }
           if (gfResult) {
             graphifyQueryCount++;
