@@ -162,4 +162,6 @@ Rules:
 - Read `.graphify/GRAPH_REPORT.md` only for broad architecture review or when `query` / `path` / `explain` do not surface enough context
 - After modifying code files in this session, run `npx graphify hook-rebuild` to keep the graph current
 - Shortcuts: `graphify q "<query>"` = `npx graphify query "<query>"`, `graphify s` = `npx graphify summary --graph .graphify/graph.json`
+- When spawning a subagent for codebase exploration: graphify context is injected automatically. The subagent MUST use graphify query instead of grep/glob. grep/glob are blocked for explore and general subagents.
+- Subagents: grep and glob are denied by permission. Use graphify query for all codebase exploration. If graphify context was provided in your task prompt, use it — do NOT re-search with grep.
 <!-- END:youmindag -->

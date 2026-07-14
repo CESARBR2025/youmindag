@@ -1,4 +1,4 @@
-// context-loader OpenCode plugin — v2.4.0 Context Armor
+// context-loader OpenCode plugin — v2.5.0 Context Armor
 // Features:
 //   A) Auto checkpoint: registra tareas, build, typecheck, file_reads
 //   B) Graphify-first: ejecuta graphify query automáticamente
@@ -306,7 +306,7 @@ function shouldShowGraphifyResult(text) {
   return text.length > 15 && !noisePatterns.test(text.trim());
 }
 
-export const ContextLoaderPlugin = async ({ directory }) => {
+export const ContextLoaderPlugin = async ({ project, client, $, directory, worktree }) => {
   const saved = loadPluginState();
   let toolCallCount = saved.toolCallCount || 0;
   let lastTask = saved.lastTask || "";
@@ -314,6 +314,7 @@ export const ContextLoaderPlugin = async ({ directory }) => {
   let pendingContext = "";
   let pendingSession = "";
   let pendingWarnings = "";
+  let pendingD1Echo = "";
   let lastCheckpointKey = saved.lastCheckpointKey || "";
   let editsSinceLastCheck = saved.editsSinceLastCheck || 0;
   let editsSinceGraphifyUpdate = saved.editsSinceGraphifyUpdate || 0;
@@ -323,35 +324,50 @@ export const ContextLoaderPlugin = async ({ directory }) => {
   let preLoaded = false;
 
   return {
-    "plugin.tool-execute.before": async (input, output) => {
-      const rawCmd = input?.args?.command || "";
-      const task = input?.text || "";
-      const cmd = rawCmd.toLowerCase();
-      const isNewTask = task && task !== lastTask && task.length > 15;
-      const now = Date.now();
+    "tool.execute.before": async (input, output) => {
+      const toolName = input?.tool || "";
       toolCallCount++;
 
-      // Quick query shortcut: graphify q "query" → npx graphify query "query"
-      const graphifyShortcut = rawCmd.match(/^graphify\s+q\s+"(.+)"\s*$/i)
-      if (graphifyShortcut) {
-        const query = graphifyShortcut[1].replace(/"/g, '\\"')
-        output.args.command = `npx graphify query "${query}"`
-        return
+      // Debug log on first tool call to inspect input structure
+      if (toolCallCount === 1) {
+        console.error(`[YouMindAG] DEBUG tool:${toolName} text:${JSON.stringify(input?.text)} args_keys:${JSON.stringify(Object.keys(input?.args||{}))} input_keys:${JSON.stringify(Object.keys(input||{}))}`);
       }
 
-      // Track grep/glob vs graphify query usage for session report
-      const isGrepGlob = /^(grep|glob)\s/.test(cmd);
-      if (isGrepGlob) grepCount++;
+      // ─── Tool-agnostic: grep/glob tracking ───
+      if (toolName === "grep" || toolName === "glob") grepCount++;
 
+      // ─── Tool-agnostic: periodic state save ───
       if (toolCallCount % STATE_SAVE_INTERVAL === 0) {
         savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount });
       }
 
-      // D1: Pre-load session summary + pending decisions on first call
+      // ─── E1: Subagent graphify context injection ───
+      if (toolName === "task" && input.args?.prompt?.length > 20 && isGraphifyAvailable()) {
+        const subPrompt = input.args.prompt;
+        const keywords = extractKeywords(subPrompt);
+        if (keywords.length > 0) {
+          const compoundQuery = buildGraphifyQuery(subPrompt, keywords);
+          const gfResult = graphifyQuery(compoundQuery, directory);
+          if (gfResult) {
+            graphifyQueryCount++;
+            output.args = {
+              ...input.args,
+              prompt: [
+                `[graphify] Contexto precargado para esta investigación (usa graphify query en vez de grep/glob):`,
+                gfResult,
+                `---`,
+                subPrompt
+              ].join("\n\n")
+            };
+          }
+        }
+        return;
+      }
+
+      // ─── D1: Pre-load — runs on first call regardless of tool ───
       if (!preLoaded) {
         preLoaded = true;
 
-        // Auto-init session file if it doesn't exist
         const sessionDir = join(directory || ROOT, ".youmindag");
         const sessionJson = join(sessionDir, "session.jsonl");
         mkdirSync(sessionDir, { recursive: true });
@@ -370,22 +386,29 @@ export const ContextLoaderPlugin = async ({ directory }) => {
           preload += (preload ? " && " : "") + `echo "[decisions] Decisiones pendientes:" && echo ${JSON.stringify("\\n" + pd)}`;
         }
 
-        // Session usage report from previous session
         const prevGrep = saved.grepCount || 0;
         const prevGraphify = saved.graphifyQueryCount || 0;
         if (prevGrep > 0 || prevGraphify > 0) {
           const report = `[graphify] 📊 Resumen de sesión anterior: ${prevGraphify} graphify queries, ${prevGrep} grep/glob.`;
           preload += (preload ? " && " : "") + `echo ${JSON.stringify(report)}`;
-          // Clear counters for new session
           saved.grepCount = 0;
           saved.graphifyQueryCount = 0;
           savePluginState(saved);
         }
 
-        if (preload) {
-          output.args.command = preload + " && " + (output.args.command || "true");
-        }
+        pendingD1Echo = preload;
       }
+
+      // ─── Bash-only features below ───
+      if (toolName !== "bash") return;
+
+      const rawCmd = input?.args?.command || "";
+      const task = input?.text || "";
+      const cmd = rawCmd.toLowerCase();
+      const isNewTask = task && task !== lastTask && task.length > 15;
+      const now = Date.now();
+
+      // Quick query shortcut: graphify q "query" → npx graphify query "query"
 
       // F2: Compaction recovery — detect context reset
       if (toolCallCount === 1 && lastTask) {
@@ -504,10 +527,10 @@ export const ContextLoaderPlugin = async ({ directory }) => {
       }
 
       // Prepend pending messages
-      if (pendingSession || pendingContext || pendingWarnings) {
-        let prefix = "";
+      if (pendingD1Echo || pendingSession || pendingContext || pendingWarnings) {
+        let prefix = pendingD1Echo || ""; pendingD1Echo = "";
         if (pendingSession) {
-          prefix += `echo "[session] Sesión anterior:" && echo ${JSON.stringify(pendingSession)}`;
+          prefix += (prefix ? " && " : "") + `echo "[session] Sesión anterior:" && echo ${JSON.stringify(pendingSession)}`;
           pendingSession = "";
         }
         if (pendingContext) {
@@ -524,7 +547,10 @@ export const ContextLoaderPlugin = async ({ directory }) => {
       }
     },
 
-    "plugin.tool-execute.after": async (input, output) => {
+    "tool.execute.after": async (input, output) => {
+      const toolName = input?.tool || "";
+      if (toolName !== "bash") return;
+
       const cmd = (input?.args?.command || "").toLowerCase();
       const exitOk = output?.result?.exitCode === 0;
 
