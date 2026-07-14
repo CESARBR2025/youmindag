@@ -19,6 +19,14 @@ import { execSync } from "child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
+
+// Heartbeat: prueba definitiva de que el plugin se cargó
+try {
+  mkdirSync(join(ROOT, ".youmindag"), { recursive: true });
+  appendFileSync(join(ROOT, ".youmindag", "plugin-heartbeat.log"),
+    `[${new Date().toISOString()}] v2.5.4 loaded | ROOT=${ROOT} | __dirname=${__dirname}\n`);
+} catch {}
+
 const GRAPH_PATH = join(ROOT, ".graphify", "graph.json");
 const CHECKPOINT_SCRIPT = join(ROOT, "scripts", "session-checkpoint.mjs");
 const REINJECT_INTERVAL = 12;
