@@ -752,8 +752,8 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   const gitignorePath = join(cwd, '.gitignore')
   if (existsSync(gitignorePath)) {
     let gitignore = readFileSync(gitignorePath, 'utf-8')
-    if (!gitignore.includes('graphify-visual')) {
-      gitignore += '\n# YouMindAG — generated visual\n.graphify/cache/\n.graphify/branch.json\n.graphify/worktree.json\n.graphify/needs_update\ngraphify-visual/\n'
+    if (!gitignore.includes('.graphify/')) {
+      gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
       maybeWriteFile(gitignorePath, gitignore)
     }
   }
@@ -900,8 +900,8 @@ async function upgrade(oldVersion, cwd, projectName) {
   const gitignorePath = join(cwd, '.gitignore')
   if (existsSync(gitignorePath)) {
     let gitignore = readFileSync(gitignorePath, 'utf-8')
-    if (!gitignore.includes('graphify-visual')) {
-      gitignore += '\n# YouMindAG — generated visual\n.graphify/cache/\n.graphify/branch.json\n.graphify/worktree.json\n.graphify/needs_update\ngraphify-visual/\n'
+    if (!gitignore.includes('.graphify/')) {
+      gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
       maybeWriteFile(gitignorePath, gitignore)
       if (!DRY_RUN) changes.push('📂 .gitignore — entradas agregadas')
     }
@@ -1199,7 +1199,7 @@ function cmdUninstall(cwd) {
     if (existsSync(gitignorePath)) {
       try {
         let gitignore = readFileSync(gitignorePath, 'utf-8')
-        const lines = gitignore.split('\n').filter(l => !l.includes('graphify-visual') && !l.includes('.graphify/'))
+        const lines = gitignore.split('\n').filter(l => !l.includes('graphify-visual') && !l.includes('.graphify/') && !l.includes('# YouMindAG'))
         writeFileSync(gitignorePath, lines.join('\n').replace(/\n{3,}/g, '\n\n'))
         console.log(`  ${GREEN}✅ Entradas de .gitignore limpiadas${RESET}`)
       } catch {}
@@ -1529,6 +1529,52 @@ function cmdWatch(cwd, args) {
   })
 }
 
+// ─── youmindag sync ──────────────────────────────────────────────
+
+function cmdSync(cwd, args) {
+  const doHook = args.includes('--hook')
+  console.log(`${CYAN}${BOLD}YouMindAG — Sync${RESET}\n`)
+
+  if (doHook) {
+    const hookPath = join(cwd, '.git', 'hooks', 'post-merge')
+    const hookScript = `#!/bin/sh\n# YouMindAG — auto sync after git pull/merge\nnpx graphify detect . 2>/dev/null && npx graphify update . 2>/dev/null && node scripts/populate-vault.mjs 2>/dev/null\necho "[YouMindAG] ✅ Contexto sincronizado post-merge"\n`
+    try {
+      mkdirSync(dirname(hookPath), { recursive: true })
+      writeFileSync(hookPath, hookScript)
+      execSync(`chmod +x "${hookPath}"`, { cwd })
+      console.log(`  ${GREEN}✅ Git hook post-merge instalado${RESET}`)
+      console.log(`  ${CYAN}   ${hookPath}${RESET}`)
+      console.log(`  ${CYAN}   Ahora cada git pull dispara sync automáticamente.${RESET}\n`)
+    } catch (e) {
+      console.log(`  ${YELLOW}⚠️  No se pudo instalar el hook: ${e.message}${RESET}\n`)
+    }
+    return
+  }
+
+  const steps = [
+    { cmd: 'npx graphify detect . 2>/dev/null', label: '🔍 Detectando archivos...' },
+    { cmd: 'npx graphify update . 2>/dev/null', label: '🌐 Reconstruyendo grafo...' },
+    { cmd: 'node scripts/populate-vault.mjs 2>/dev/null', label: '📚 Actualizando bóveda...' },
+  ]
+
+  for (const step of steps) {
+    console.log(`  ${CYAN}${step.label}${RESET}`)
+    try {
+      execSync(step.cmd, { cwd, stdio: 'pipe', timeout: 60000 })
+    } catch { /* non-fatal */ }
+  }
+
+  const graphPath = join(cwd, '.graphify', 'graph.json')
+  if (existsSync(graphPath)) {
+    try {
+      const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
+      console.log(`  ${GREEN}✅ Sincronización completa — ${graph.nodes?.length || 0} nodos, ${graph.edges?.length || 0} aristas${RESET}\n`)
+    } catch {}
+  } else {
+    console.log(`  ${GREEN}✅ Bóveda actualizada${RESET}\n`)
+  }
+}
+
 // ─── youmindag references ────────────────────────────────────────
 
 function findProjectFiles(cwd) {
@@ -1721,6 +1767,8 @@ function showHelp() {
   console.log(`  npx youmindag status --json             Estado en formato JSON`)
   console.log(`  npx youmindag watch                     Observar cambios y repoblar bóveda automáticamente`)
   console.log(`  npx youmindag watch --poll              Watch con polling (para sistemas de archivos remotos)`)
+  console.log(`  npx youmindag sync                      Sincronizar grafo y bóveda (post git pull/merge)`)
+  console.log(`  npx youmindag sync --hook               Instalar git hook post-merge para sync automático`)
   console.log(`  npx youmindag uninstall                 Desinstalar YouMindAG del proyecto`)
   console.log(`  npx youmindag help                      Mostrar esta ayuda`)
   console.log()
@@ -1758,6 +1806,9 @@ async function main() {
   }
   if (subcommand === 'watch') {
     return cmdWatch(CWD, args.slice(1))
+  }
+  if (subcommand === 'sync') {
+    return cmdSync(CWD, args.slice(1))
   }
   if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
     return showHelp()
