@@ -322,8 +322,17 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
   let graphifyQueryCount = 0;
   let wasCompacted = false;
   let preLoaded = false;
+  let currentUserText = "";
 
   return {
+    "chat.message": async (input, output) => {
+      const textParts = (output.parts || [])
+        .filter(p => p.type === "text")
+        .map(p => p.text)
+        .join("\n");
+      if (textParts) currentUserText = textParts;
+    },
+
     "tool.execute.before": async (input, output) => {
       const toolName = input?.tool || "";
       toolCallCount++;
@@ -342,23 +351,20 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
       }
 
       // ─── E1: Subagent graphify context injection ───
-      if (toolName === "task" && input.args?.prompt?.length > 20 && isGraphifyAvailable()) {
-        const subPrompt = input.args.prompt;
+      if (toolName === "task" && output.args?.prompt?.length > 20 && isGraphifyAvailable()) {
+        const subPrompt = output.args.prompt;
         const keywords = extractKeywords(subPrompt);
         if (keywords.length > 0) {
           const compoundQuery = buildGraphifyQuery(subPrompt, keywords);
           const gfResult = graphifyQuery(compoundQuery, directory);
           if (gfResult) {
             graphifyQueryCount++;
-            output.args = {
-              ...input.args,
-              prompt: [
-                `[graphify] Contexto precargado para esta investigación (usa graphify query en vez de grep/glob):`,
-                gfResult,
-                `---`,
-                subPrompt
-              ].join("\n\n")
-            };
+            output.args.prompt = [
+              `[graphify] Contexto precargado para esta investigación (usa graphify query en vez de grep/glob):`,
+              gfResult,
+              `---`,
+              subPrompt
+            ].join("\n\n");
           }
         }
         return;
@@ -402,8 +408,8 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
       // ─── Bash-only features below ───
       if (toolName !== "bash") return;
 
-      const rawCmd = input?.args?.command || "";
-      const task = input?.text || "";
+      const rawCmd = output?.args?.command || "";
+      const task = currentUserText || "";
       const cmd = rawCmd.toLowerCase();
       const isNewTask = task && task !== lastTask && task.length > 15;
       const now = Date.now();
