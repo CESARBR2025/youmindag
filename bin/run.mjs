@@ -752,7 +752,15 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   const gitignorePath = join(cwd, '.gitignore')
   if (existsSync(gitignorePath)) {
     let gitignore = readFileSync(gitignorePath, 'utf-8')
-    if (!gitignore.includes('.graphify/')) {
+    const hasOldEntries = gitignore.includes('graphify-visual') || gitignore.includes('.graphify/branch.json')
+    if (hasOldEntries) {
+      // Replace old scattered entries with clean single-line ignore
+      const lines = gitignore.split('\n').filter(l =>
+        !l.includes('.graphify/') && !l.includes('graphify-visual') && !l.includes('# YouMindAG — generated')
+      )
+      gitignore = lines.join('\n') + '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
+      maybeWriteFile(gitignorePath, gitignore)
+    } else if (!gitignore.includes('.graphify/')) {
       gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
       maybeWriteFile(gitignorePath, gitignore)
     }
@@ -900,7 +908,15 @@ async function upgrade(oldVersion, cwd, projectName) {
   const gitignorePath = join(cwd, '.gitignore')
   if (existsSync(gitignorePath)) {
     let gitignore = readFileSync(gitignorePath, 'utf-8')
-    if (!gitignore.includes('.graphify/')) {
+    const hasOldEntries = gitignore.includes('graphify-visual') || gitignore.includes('.graphify/branch.json')
+    if (hasOldEntries) {
+      const lines = gitignore.split('\n').filter(l =>
+        !l.includes('.graphify/') && !l.includes('graphify-visual') && !l.includes('# YouMindAG — generated')
+      )
+      gitignore = lines.join('\n') + '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
+      maybeWriteFile(gitignorePath, gitignore)
+      if (!DRY_RUN) changes.push('📂 .gitignore — entradas actualizadas')
+    } else if (!gitignore.includes('.graphify/')) {
       gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
       maybeWriteFile(gitignorePath, gitignore)
       if (!DRY_RUN) changes.push('📂 .gitignore — entradas agregadas')
