@@ -1,4 +1,4 @@
-// context-loader OpenCode plugin — v1.6.0 Context Armor
+// context-loader OpenCode plugin — v2.4.0 Context Armor
 // Features:
 //   A) Auto checkpoint: registra tareas, build, typecheck, file_reads
 //   B) Graphify-first: ejecuta graphify query automáticamente

@@ -666,6 +666,11 @@ function upgradeScriptsOpencode(cwd) {
   const pluginsDst = join(cwd, '.opencode', 'plugins')
   if (existsSync(pluginsSrc)) {
     maybeCopyDir(pluginsSrc, pluginsDst, true)
+    // v2.4.0: clean up legacy .js file (migrated to .mjs for ESM compatibility)
+    const legacyPlugin = join(pluginsDst, 'context-loader.js')
+    if (existsSync(legacyPlugin)) {
+      maybeRmSync(legacyPlugin)
+    }
     changes.push('.opencode/plugins actualizado')
   }
 

@@ -1,5 +1,5 @@
 {
   "plugin": [
-    ".opencode/plugins/context-loader.js"
+    ".opencode/plugins/context-loader.mjs"
   ]
 }
