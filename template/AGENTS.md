@@ -161,4 +161,5 @@ Rules:
 - For review impact on changed files, use `graphify review-delta --graph .graphify/graph.json` instead of generic traversal
 - Read `.graphify/GRAPH_REPORT.md` only for broad architecture review or when `query` / `path` / `explain` do not surface enough context
 - After modifying code files in this session, run `npx graphify hook-rebuild` to keep the graph current
+- Shortcuts: `graphify q "<query>"` = `npx graphify query "<query>"`, `graphify s` = `npx graphify summary --graph .graphify/graph.json`
 <!-- END:youmindag -->
