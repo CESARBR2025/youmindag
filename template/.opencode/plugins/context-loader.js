@@ -370,7 +370,10 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
       }
 
       // ─── Tool-agnostic: grep/glob tracking ───
-      if (toolName === "grep" || toolName === "glob") grepCount++;
+      if (toolName === "grep" || toolName === "glob") {
+        grepCount++;
+        if (YM_DEBUG) ymDebug(`grep/glob detectado tool:${toolName} sessionID:${input.sessionID} grepCount:${grepCount}`);
+      }
 
       // ─── Tool-agnostic: periodic state save ───
       if (toolCallCount % STATE_SAVE_INTERVAL === 0) {
