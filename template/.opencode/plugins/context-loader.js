@@ -27,6 +27,20 @@ try {
     `[${new Date().toISOString()}] v2.5.4 loaded | ROOT=${ROOT} | __dirname=${__dirname}\n`);
 } catch {}
 
+const TOKEN_LOG = join(ROOT, ".youmindag", "token-usage.jsonl")
+
+function estimateTokens(text) {
+  if (!text || typeof text !== "string") return 0
+  return Math.round(text.length / 4)
+}
+
+function logToken(data) {
+  try {
+    mkdirSync(join(ROOT, ".youmindag"), { recursive: true })
+    appendFileSync(TOKEN_LOG, JSON.stringify(data) + "\n")
+  } catch {}
+}
+
 const GRAPH_PATH = join(ROOT, ".graphify", "graph.json");
 const CHECKPOINT_SCRIPT = join(ROOT, "scripts", "session-checkpoint.mjs");
 const REINJECT_INTERVAL = 12;
@@ -357,12 +371,21 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
         .filter(p => p.type === "text")
         .map(p => p.text)
         .join("\n");
-      if (textParts) currentUserText = textParts;
+      if (textParts) {
+        currentUserText = textParts
+        logToken({ ts: new Date().toISOString(), event: "user_message", sessionID: input.sessionID, tokens: estimateTokens(textParts), preview: textParts.slice(0, 80) })
+      }
     },
 
     "tool.execute.before": async (input, output) => {
       const toolName = input?.tool || "";
       toolCallCount++;
+
+      // Token tracking — log input size for task/bash/read/grep calls
+      if (/^(task|bash|read|grep|glob|write|edit)$/.test(toolName)) {
+        const argsStr = JSON.stringify(output?.args || {})
+        logToken({ ts: new Date().toISOString(), event: "tool_before", tool: toolName, sessionID: input.sessionID, tokens: estimateTokens(argsStr) })
+      }
 
       // Debug log on first tool call to inspect input structure
       if (toolCallCount === 1) {
@@ -594,6 +617,13 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
 
     "tool.execute.after": async (input, output) => {
       const toolName = input?.tool || "";
+
+      // Token tracking — log output size for all relevant tools
+      if (/^(task|bash|read|grep|glob|write|edit)$/.test(toolName)) {
+        const resultStr = JSON.stringify(output?.result || output?.output || output || {})
+        logToken({ ts: new Date().toISOString(), event: "tool_after", tool: toolName, sessionID: input.sessionID, tokens: estimateTokens(resultStr) })
+      }
+
       if (toolName !== "bash") return;
 
       const cmd = (input?.args?.command || "").toLowerCase();
