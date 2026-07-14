@@ -323,9 +323,12 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
   let wasCompacted = false;
   let preLoaded = false;
   let currentUserText = "";
+  let primarySessionID = null;
 
   return {
     "chat.message": async (input, output) => {
+      if (!primarySessionID) primarySessionID = input.sessionID;
+      if (input.sessionID !== primarySessionID) return;
       const textParts = (output.parts || [])
         .filter(p => p.type === "text")
         .map(p => p.text)
