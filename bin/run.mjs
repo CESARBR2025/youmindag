@@ -4,8 +4,8 @@
 // Ejecutar DENTRO del directorio del proyecto destino.
 
 import { fileURLToPath } from 'url'
-import { join, dirname, basename } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync, rmSync, watch } from 'fs'
+import { join, dirname, basename, resolve } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync, rmSync, watch, realpathSync } from 'fs'
 import { execSync } from 'child_process'
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
@@ -403,7 +403,10 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+try {
+  var isMain = process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+} catch {}
+if (isMain) {
 main().catch(e => {
   console.error(`\n${YELLOW}Error: ${e.message}${RESET}\n`)
   process.exit(1)
