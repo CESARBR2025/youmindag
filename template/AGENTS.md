@@ -1,19 +1,22 @@
 <!-- BEGIN:youmindag -->
 # ⚡ Reglas de oro — leer antes de cada instrucción
 
-1. 📖 **Leer AGENTS.md + `boveda/Home.md` + `.youmindag/session.jsonl`** siempre al recibir una nueva instrucción
+1. 📖 **Leer AGENTS.md + `Home.md` de la bóveda + `.youmindag/session.jsonl`** siempre al recibir una nueva instrucción.
+   - La bóveda está en un directorio llamado `boveda-*` (ej: `boveda-seguridad-publica`) o `boveda`. Buscar el directorio antes de leer.
 
 2. 🔎 **Graphify primero, grep después.** Si `.graphify/graph.json` existe:
    - Para orientación rápida: `graphify summary --graph .graphify/graph.json`
    - Para buscar archivos: `graphify query "..."` 
    - Para flujos entre módulos: `graphify path "A" "B"`
-   - Si graphify no está disponible → `boveda/🏗 Arquitectura/Estructura.md` como fallback
+   - Si graphify no está disponible → `Estructura.md` en la bóveda como fallback
 
 3. 🗄 **BD real sobre documentación.** Si el proyecto tiene BD:
-   - Consultar la BD real (credenciales en `boveda/🛠 Stack/Variables de Entorno.md`)
+   - Consultar la BD real (credenciales en `Variables de Entorno.md` de la bóveda)
    - No adivinar esquemas ni confiar solo en la bóveda
 
-4. ✅ **Verificar cambios.** Al completar, ejecutar comandos de `boveda/🛠 Stack/Comandos.md` + `npx graphify update`
+4. ✅ **Verificar cambios.** Al completar, ejecutar comandos de `Comandos.md` en la bóveda + `npx graphify update`
+
+5. 📁 **Ubicación de la bóveda.** La bóveda usa nombres como `boveda-seguridad-publica` o `boveda`. Todas las referencias a `boveda/` en este documento significan "buscar el directorio real de la bóveda en la raíz del proyecto".
 
 ---
 
@@ -51,8 +54,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # Bóveda de Conocimiento
 
-**Antes de cualquier cambio, leer `boveda/Home.md` para contexto completo del proyecto.**
-La bóveda en `boveda/` es la única fuente de documentación. No crear documentación suelta fuera de ella.
+**Antes de cualquier cambio, leer `Home.md` en la bóveda para contexto completo del proyecto.**
+La bóveda (directorio `boveda-*` o `boveda`) es la única fuente de documentación. No crear documentación suelta fuera de ella.
 
 El archivo `.opencode/context-map.yaml` mapea cada dominio del proyecto a sus archivos relevantes, documentación y query de Graphify. Usarlo para cargar contexto en una tarea nueva.
 

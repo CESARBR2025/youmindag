@@ -1,31 +1,30 @@
-# [Nombre de la Feature]
+# <Nombre> — <Propósito en 5-10 palabras>
 
-**Propósito**: Una línea que describe qué hace.
+**Propósito**: <1-2 líneas>
 
 ---
 
-## Flujo
-
-```mermaid
-flowchart TD
-    A[Inicio] --> B[Paso 1]
-    B --> C[Paso 2]
-    C --> D[Fin]
-```
-
-## Componentes involucrados
+## Componentes
 
 | Archivo | Rol |
 |---------|-----|
-| `ruta/al/archivo.ts` | Qué hace en esta feature |
+| `lib/<modulo>/types.ts` | <qué define> |
+| `lib/<modulo>/repository.ts` | <funciones clave> |
+| `lib/<modulo>/actions.ts` | <server actions> |
+
+## Páginas / Rutas
+
+| Ruta | Propósito |
+|------|-----------|
+| `/<ruta>` | <qué hace> |
 
 ## BD
 
-| Tabla | Columnas clave | Uso |
-|-------|---------------|-----|
-| `nombre_tabla` | `col1`, `col2` | Para qué se usa |
+| Tabla | Uso en este feature |
+|-------|---------------------|
+| `tabla_x` | <solo columnas relevantes a este feature> |
 
 ## Reglas de negocio
 
-1. Primera regla
-2. Segunda regla
+1. ...
+2. ...

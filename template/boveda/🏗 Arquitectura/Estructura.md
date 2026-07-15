@@ -1,9 +1,11 @@
 # Estructura del Proyecto
 
-**Propósito**: Mapa del árbol de directorios del proyecto.
+**Propósito**: Árbol de directorios del proyecto (auto-generado).
 
 ---
 
 ```
-(Pendiente de documentar)
+<!-- AUTO-GENERATED START -->
+(Pendiente de documentar — se genera automáticamente durante `npx youmindag`)
+<!-- AUTO-GENERATED END -->
 ```

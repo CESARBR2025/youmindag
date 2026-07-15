@@ -149,6 +149,35 @@ function pascalCase(str) {
     .replace(/\s+/g, '')
 }
 
+function kebabCase(str) {
+  return str
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function getBovedaDir(cwd) {
+  // Try .youmindag.json first
+  const p = join(cwd, YOUMINDAG_JSON)
+  if (existsSync(p)) {
+    try {
+      const data = JSON.parse(readFileSync(p, 'utf-8'))
+      if (data.bovedaDir && existsSync(join(cwd, data.bovedaDir))) return data.bovedaDir
+    } catch {}
+  }
+  // Look for boveda-* directories
+  try {
+    const entries = readdirSync(cwd)
+    const match = entries.find(e => e.startsWith('boveda-') && statSync(join(cwd, e)).isDirectory())
+    if (match) return match
+  } catch {}
+  // Legacy fallback
+  if (existsSync(join(cwd, 'boveda'))) return 'boveda'
+  return null
+}
+
 // ─── AUTO-GENERATED block helpers ──────────────────────────────
 
 const AUTO_START = '<!-- AUTO-GENERATED START -->'
@@ -219,7 +248,8 @@ function maybeRmSync(p) {
 // ─── Poblado automático de bóveda ─────────────────────────────────
 
 function populateComandos(cwd) {
-  const file = join(cwd, 'boveda', '🛠 Stack', 'Comandos.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🛠 Stack', 'Comandos.md')
   const pkgPath = join(cwd, 'package.json')
   if (!existsSync(pkgPath)) return false
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
@@ -242,7 +272,8 @@ function populateComandos(cwd) {
 }
 
 function populateLibrerias(cwd) {
-  const file = join(cwd, 'boveda', '🛠 Stack', 'Librerias.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🛠 Stack', 'Librerias.md')
   const pkgPath = join(cwd, 'package.json')
   if (!existsSync(pkgPath)) return false
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
@@ -273,7 +304,8 @@ function populateLibrerias(cwd) {
 }
 
 function populateEnvVars(cwd) {
-  const file = join(cwd, 'boveda', '🛠 Stack', 'Variables de Entorno.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🛠 Stack', 'Variables de Entorno.md')
   let envContent = null
   for (const name of ['.env.example', '.env']) {
     const p = join(cwd, name)
@@ -312,8 +344,9 @@ function populateEnvVars(cwd) {
 }
 
 function populateEstructura(cwd) {
-  const file = join(cwd, 'boveda', '🏗 Arquitectura', 'Estructura.md')
-  const ignored = new Set(['node_modules', '.git', 'boveda', '.graphify', 'graphify-visual', '.next', 'dist', 'build', '.cache'])
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🏗 Arquitectura', 'Estructura.md')
+  const ignored = new Set(['node_modules', '.git', bovedaDir, '.graphify', 'graphify-visual', '.next', 'dist', 'build', '.cache'])
   const maxDepth = 4
 
   function walk(dir, prefix = '') {
@@ -348,7 +381,8 @@ function populateEstructura(cwd) {
   return true
 }
 function populateAPIRoutes(cwd) {
-  const file = join(cwd, 'boveda', '📡 API', 'API Routes.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '📡 API', 'API Routes.md')
   const routeDirs = [
     join(cwd, 'app', 'api'),
     join(cwd, 'pages', 'api'),
@@ -400,7 +434,8 @@ function populateAPIRoutes(cwd) {
 }
 
 function populateFeatures(cwd) {
-  const file = join(cwd, 'boveda', '🧩 Features', 'Index.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🧩 Features', 'Index.md')
   const srcDirs = [join(cwd, 'src'), join(cwd, 'lib'), join(cwd, 'app')]
 
   const modules = []
@@ -419,16 +454,17 @@ function populateFeatures(cwd) {
   if (!modules.length) return false
 
   const unique = [...new Set(modules)].sort()
-  let md = `# Features — Índice\n\n**Propósito**: Catálogo de todas las funcionalidades del sistema.\n\n---\n\n| Módulo | Descripción | Estado |\n|--------|-------------|--------|\n`
+  let md = `# Features — Índice\n\n**Propósito**: Catálogo de todas las funcionalidades del sistema.\n\n---\n\n| Feature | Flujo | Descripción | Estado |\n|--------|-------|-------------|--------|\n`
   for (const m of unique) {
-    md += `| ${m} | (Pendiente) | ✨ Detectado |\n`
+    md += `| ${m} | (Pendiente) | (Pendiente) | ✨ Detectado |\n`
   }
   writeBovedaSection(file, md)
   return true
 }
 
 function populateServerActions(cwd) {
-  const file = join(cwd, 'boveda', '📡 API', 'Server Actions.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '📡 API', 'Server Actions.md')
   const searchDirs = [
     join(cwd, 'src'),
     join(cwd, 'app'),
@@ -478,7 +514,8 @@ function populateServerActions(cwd) {
 }
 
 function populateMiddleware(cwd) {
-  const file = join(cwd, 'boveda', '🏗 Arquitectura', 'Middleware y Auth.md')
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const file = join(cwd, bovedaDir, '🏗 Arquitectura', 'Middleware y Auth.md')
   const candidates = [
     join(cwd, 'middleware.ts'),
     join(cwd, 'src', 'middleware.ts'),
@@ -524,6 +561,7 @@ function populateMiddleware(cwd) {
 }
 
 function populateVaultFiles(cwd) {
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
   const tasks = [
     { name: 'Comandos', fn: () => populateComandos(cwd) },
     { name: 'Librerías', fn: () => populateLibrerias(cwd) },
@@ -540,10 +578,10 @@ function populateVaultFiles(cwd) {
     try {
       if (t.fn()) {
         populated++
-        console.log(`  ${GREEN}✅ boveda/${t.name} poblado${RESET}`)
+        console.log(`  ${GREEN}✅ ${bovedaDir}/${t.name} poblado${RESET}`)
       }
     } catch (e) {
-      console.log(`  ${YELLOW}⚠️  boveda/${t.name}: ${e.message}${RESET}`)
+      console.log(`  ${YELLOW}⚠️  ${bovedaDir}/${t.name}: ${e.message}${RESET}`)
     }
   }
   if (populated > 0) console.log(`  ${GREEN}✅ Bóveda auto-poblada (${populated} secciones)${RESET}\n`)
@@ -570,9 +608,10 @@ function getGraphifyVersion(cwd) {
   return null
 }
 
-function writeYoumindagVersion(cwd, graphifyVersion) {
+function writeYoumindagVersion(cwd, graphifyVersion, bovedaDir) {
   const data = { version: VERSION, installedAt: new Date().toISOString() }
   if (graphifyVersion) data.graphifyVersion = graphifyVersion
+  if (bovedaDir) data.bovedaDir = bovedaDir
   maybeWriteFile(join(cwd, YOUMINDAG_JSON), JSON.stringify(data, null, 2) + '\n')
 }
 
@@ -703,17 +742,18 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   console.log()
 
   // Inject boveda/
+  const bovedaDirName = getBovedaDir(cwd) || `boveda-${kebabCase(projectName)}`
   if (!hasBoveda) {
     console.log(`${BOLD}📚 Creando bóveda de conocimiento...${RESET}`)
-    maybeCopyDir(join(TEMPLATE, 'boveda'), join(cwd, 'boveda'))
-    const homePath = join(cwd, 'boveda', 'Home.md')
+    maybeCopyDir(join(TEMPLATE, 'boveda'), join(cwd, bovedaDirName))
+    const homePath = join(cwd, bovedaDirName, 'Home.md')
     if (existsSync(homePath)) {
       let home = readFileSync(homePath, 'utf-8')
       home = home.replace('[Nombre del Proyecto]', pascalCase(projectName))
       maybeWriteFile(homePath, home)
     }
-    const count = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
-    console.log(`  ${GREEN}✅ boveda/ creada (${count} documentos)${RESET}\n`)
+    const count = readdirSync(join(cwd, bovedaDirName), { recursive: true }).filter(f => f.endsWith('.md')).length
+    console.log(`  ${GREEN}✅ ${bovedaDirName}/ creada (${count} documentos)${RESET}\n`)
     populateVaultFiles(cwd)
 
     // Post-install: check if .env.example is empty or missing
@@ -847,13 +887,13 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   }
 
   // Write version
-  writeYoumindagVersion(cwd, graphifyVersion)
+  writeYoumindagVersion(cwd, graphifyVersion, bovedaDirName)
 
   // Summary
-  const bovedaCount = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
+  const bovedaCount = readdirSync(join(cwd, bovedaDirName), { recursive: true }).filter(f => f.endsWith('.md')).length
   console.log(`${CYAN}${BOLD}  ──────────────────────────${RESET}`)
   console.log(`${GREEN}${BOLD}  🎉 YouMindAG activo en ${projectName}${RESET}\n`)
-  console.log(`  ${BOLD}📚 Bóveda:${RESET} ${bovedaCount} documentos en boveda/`)
+  console.log(`  ${BOLD}📚 Bóveda:${RESET} ${bovedaCount} documentos en ${bovedaDirName}/`)
   console.log(`  ${BOLD}🔧 Contexto:${RESET} Plugin + skills + context-map`)
   console.log(`  ${BOLD}🌐 Grafo:${RESET} Graphify indexando el código`)
   console.log(`  ${BOLD}📜 Scripts:${RESET} load-context, extract-domain, export-schema, ym-dev, trace-*`)
@@ -870,28 +910,29 @@ async function upgrade(oldVersion, cwd, projectName) {
   console.log(`  ${BOLD}🔄 Upgrade:${RESET} v${oldVersion} → v${VERSION}`)
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}\n`)
 
-  const hasBoveda = existsSync(join(cwd, 'boveda'))
+  const existingBoveda = getBovedaDir(cwd)
+  const bovedaDirName = existingBoveda || `boveda-${kebabCase(projectName)}`
 
   // 1. AGENTS.md — merge via markers
   const agentsResult = upgradeAgentsMd(cwd)
   changes.push(`📄 AGENTS.md — ${agentsResult}`)
 
   // 2. Bóveda — skip (user territory)
-  if (hasBoveda) {
-    changes.push('📦 boveda/ — sin cambios (poblada por el usuario)')
+  if (existingBoveda) {
+    changes.push(`📦 ${existingBoveda}/ — sin cambios (poblada por el usuario)`)
   } else {
     console.log(`${BOLD}📚 Creando bóveda de conocimiento...${RESET}`)
-    maybeCopyDir(join(TEMPLATE, 'boveda'), join(cwd, 'boveda'))
-    const homePath = join(cwd, 'boveda', 'Home.md')
+    maybeCopyDir(join(TEMPLATE, 'boveda'), join(cwd, bovedaDirName))
+    const homePath = join(cwd, bovedaDirName, 'Home.md')
     if (existsSync(homePath)) {
       let home = readFileSync(homePath, 'utf-8')
       home = home.replace('[Nombre del Proyecto]', pascalCase(projectName))
       maybeWriteFile(homePath, home)
     }
-    const count = readdirSync(join(cwd, 'boveda'), { recursive: true }).filter(f => f.endsWith('.md')).length
-    console.log(`  ${GREEN}✅ boveda/ creada (${count} documentos)${RESET}\n`)
+    const count = readdirSync(join(cwd, bovedaDirName), { recursive: true }).filter(f => f.endsWith('.md')).length
+    console.log(`  ${GREEN}✅ ${bovedaDirName}/ creada (${count} documentos)${RESET}\n`)
     populateVaultFiles(cwd)
-    changes.push('📦 boveda/ — creada')
+    changes.push(`📦 ${bovedaDirName}/ — creada`)
   }
 
   // 3. Scripts + .opencode — overwrite
@@ -924,7 +965,7 @@ async function upgrade(oldVersion, cwd, projectName) {
   }
 
   // 6. Write version
-  writeYoumindagVersion(cwd, getGraphifyVersion(cwd))
+  writeYoumindagVersion(cwd, getGraphifyVersion(cwd), bovedaDirName)
 
   // Report
   console.log(`${BOLD}\n📋 Cambios aplicados:${RESET}`)
@@ -1083,7 +1124,7 @@ function cmdStatus(cwd) {
       installedVersion: oldVersion || null,
       upToDate: isUpToDate,
       staleBoveda: staleBoveda || null,
-      hasBoveda: existsSync(join(cwd, 'boveda')),
+      hasBoveda: !!getBovedaDir(cwd),
       hasDotOpendcode: existsSync(join(cwd, '.opencode', 'opencode.json')),
       hasScripts: existsSync(join(cwd, 'scripts', 'load-context.mjs')),
       hasGraphify: existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify')),
@@ -1122,8 +1163,11 @@ function cmdUninstall(cwd) {
 
   console.log(`  ${YELLOW}⚠️  Se eliminarán los siguientes archivos/directorios:${RESET}`)
   const targets = []
+  const bovedaDir = getBovedaDir(cwd)
   const check = (path, label) => { if (existsSync(path)) targets.push(label) }
-  check(join(cwd, 'boveda'), '📚 boveda/ (bóveda de conocimiento)')
+  if (bovedaDir) check(join(cwd, bovedaDir), `📚 ${bovedaDir}/ (bóveda de conocimiento)`)
+  // Legacy cleanup
+  if (existsSync(join(cwd, 'boveda')) && !bovedaDir) check(join(cwd, 'boveda'), '📚 boveda/ (bóveda legacy)')
   check(join(cwd, '.opencode'), '🔧 .opencode/ (plugin + skills + context-map)')
   check(join(cwd, 'scripts'), '📜 scripts/ (utilidades)')
   check(join(cwd, '.youmindag'), '📁 .youmindag/ (sesión + estado)')
@@ -1138,7 +1182,8 @@ function cmdUninstall(cwd) {
   // Git safety check — warn about uncommitted changes in targets
   if (existsSync(join(cwd, '.git'))) {
     try {
-      const dirty = String(execSync('git status --porcelain boveda/ .opencode/ scripts/ AGENTS.md 2>/dev/null || true', { cwd, encoding: 'utf-8' })).trim()
+      const bovedaGitPath = getBovedaDir(cwd) || 'boveda'
+      const dirty = String(execSync(`git status --porcelain ${bovedaGitPath}/ .opencode/ scripts/ AGENTS.md 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
       if (dirty) {
         const lines = dirty.split('\n').length
         console.log(`  ${YELLOW}⚠️  ${lines} archivo${lines !== 1 ? 's' : ''} sin commitear en los directorios a eliminar:${RESET}`)
@@ -1159,7 +1204,10 @@ function cmdUninstall(cwd) {
       return
     }
 
-    const dirsToRemove = ['.youmindag', 'boveda', '.opencode', 'scripts', '.graphify', 'graphify-visual']
+    const dirsToRemove = ['.youmindag', '.opencode', 'scripts', '.graphify', 'graphify-visual']
+    const bd = getBovedaDir(cwd)
+    if (bd) dirsToRemove.push(bd)
+    if (existsSync(join(cwd, 'boveda'))) dirsToRemove.push('boveda') // legacy
     for (const dir of dirsToRemove) {
       const full = join(cwd, dir)
       if (existsSync(full)) {
@@ -1230,7 +1278,8 @@ function checkStaleBoveda(cwd, returnResult = false) {
   if (!existsSync(join(cwd, '.git'))) return returnResult ? null : undefined
 
   try {
-    const bovedaLog = String(execSync('git log --oneline -1 -- boveda/ 2>/dev/null || true', { cwd, encoding: 'utf-8' })).trim()
+    const bovedaGitPath = getBovedaDir(cwd) || 'boveda'
+    const bovedaLog = String(execSync(`git log --oneline -1 -- ${bovedaGitPath}/ 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
     const srcDirs = ['app/', 'lib/', 'src/', 'components/']
     let sourceLog = ''
     for (const dir of srcDirs) {
@@ -1252,7 +1301,7 @@ function checkStaleBoveda(cwd, returnResult = false) {
 
     if (count > 0) {
       if (returnResult) return { count, bovedaLog, sourceLog }
-      console.log(`  ${YELLOW}⚠️  boveda/ está ${count} commit${count === 1 ? '' : 's'} atrasada respecto al código fuente${RESET}`)
+      console.log(`  ${YELLOW}⚠️  ${bovedaGitPath}/ está ${count} commit${count === 1 ? '' : 's'} atrasada respecto al código fuente${RESET}`)
       console.log(`  ${YELLOW}   Último cambio en bóveda:  ${bovedaLog}${RESET}`)
       console.log(`  ${YELLOW}   Último cambio en source: ${sourceLog}${RESET}`)
       console.log()
@@ -1714,10 +1763,11 @@ function cmdContext(cwd, subArgs) {
   }
 
   // Heuristic fallback
-  const bovedaFile = join(cwd, 'boveda', '🧩 Features', `${moduleName}.md`)
+  const bovedaDir = getBovedaDir(cwd) || 'boveda'
+  const bovedaFile = join(cwd, bovedaDir, '🧩 Features', `${moduleName}.md`)
   if (existsSync(bovedaFile)) {
     const lines = readFileSync(bovedaFile, 'utf-8').split('\n').length
-    console.log(`${GREEN}📄 Documentación: boveda/🧩 Features/${moduleName}.md (${lines} líneas)${RESET}`)
+    console.log(`${GREEN}📄 Documentación: ${bovedaDir}/🧩 Features/${moduleName}.md (${lines} líneas)${RESET}`)
   }
 
   const srcDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
@@ -1746,7 +1796,7 @@ function cmdContext(cwd, subArgs) {
 
   console.log(`\n${CYAN}📖 Carga sugerida para el modelo:${RESET}`)
   if (existsSync(bovedaFile)) {
-    console.log(`  ${CYAN}1.${RESET} boveda/🧩 Features/${moduleName}.md`)
+    console.log(`  ${CYAN}1.${RESET} ${bovedaDir}/🧩 Features/${moduleName}.md`)
   }
   const codeDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
   for (const dir of codeDirs) {
@@ -1857,7 +1907,7 @@ async function main() {
     const info = detectLang()
     const pkg = existsSync(join(CWD, 'package.json'))
     const hasGit = existsSync(join(CWD, '.git'))
-    const hasBoveda = existsSync(join(CWD, 'boveda'))
+    const hasBoveda = !!getBovedaDir(CWD)
     const hasDB = hasPostgres()
     const wantSchema = hasDB
     await freshInstall(CWD, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema)
