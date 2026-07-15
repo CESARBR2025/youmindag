@@ -1,6 +1,6 @@
 {
   "name": "youmindag",
-  "version": "2.9.1",
+  "version": "2.9.2",
   "description": "🧠 Inyecta inteligencia de contexto a cualquier proyecto. Una línea y tu AI coding tool entiende toda la arquitectura.",
   "bin": {
     "youmindag": "bin/run.mjs"
@@ -35,9 +35,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint bin/run.mjs lib/*.mjs lib/commands/*.mjs",
+    "verify": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "eslint": "^10.7.0"
   }
 }
