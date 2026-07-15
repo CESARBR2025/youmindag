@@ -3,19 +3,27 @@
 // Uso: npx youmindag
 // Ejecutar DENTRO del directorio del proyecto destino.
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync, rmSync, watch } from 'fs'
-import { join, dirname, basename, relative } from 'path'
 import { fileURLToPath } from 'url'
+import { join, dirname, basename } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync, rmSync, watch } from 'fs'
 import { execSync } from 'child_process'
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
 
 import { RESET, CYAN, GREEN, YELLOW, BOLD, pascalCase, kebabCase } from '../lib/utils.mjs'
 import { detectLang, hasPostgres, detectDBEngine, getDBMigrationCommands } from '../lib/detect.mjs'
-import { getBovedaDir, readYoumindagVersion, writeBovedaSection, AUTO_START, AUTO_END, YOUMINDAG_JSON } from '../lib/vault.mjs'
-import { ensureGitignoreEntries, cleanGitignoreEntries } from '../lib/gitignore.mjs'
+import { getBovedaDir, readYoumindagVersion, writeBovedaSection, AUTO_START, AUTO_END, readYoumindagData, YOUMINDAG_JSON } from '../lib/vault.mjs'
+import { log, parseEnvFile, copyDir, maybeWriteFile, maybeCopyFile, maybeCopyDir, maybeExecSync, maybeRmSync, getDryRun, setDryRun } from '../lib/fs-helpers.mjs'
 import { upgradeAgentsMd, mergeContextMap } from '../lib/agents.mjs'
-
+import { ensureGitignoreEntries, cleanGitignoreEntries } from '../lib/gitignore.mjs'
+import { populateVaultFiles } from '../lib/populate.mjs'
+import { getGraphifyVersion, installGraphify } from '../lib/graphify.mjs'
+import { cmdStatus, cmdUninstall, checkStaleBoveda, cmdReferences, cmdContext, showHelp } from '../lib/commands/misc.mjs'
+import { cmdDb } from '../lib/commands/db.mjs'
+import { cmdTrace } from '../lib/commands/trace.mjs'
+import { cmdDev } from '../lib/commands/dev.mjs'
+import { cmdWatch } from '../lib/commands/watch.mjs'
+import { cmdSync } from '../lib/commands/sync.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -26,444 +34,8 @@ const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-
 const VERSION = PKG.version
 
 
-function log(msg) { console.log(msg) }
-
-function parseEnvFile(cwd) {
-  let envContent = null
-  for (const name of ['.env', '.env.example']) {
-    const p = join(cwd, name)
-    if (existsSync(p)) {
-      envContent = readFileSync(p, 'utf-8')
-      break
-    }
-  }
-  if (!envContent) return {}
-  const vars = {}
-  for (const line of envContent.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('#') || !trimmed) continue
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)/)
-    if (match) {
-      vars[match[1]] = match[2].replace(/^["']|["']$/g, '')
-    }
-  }
-  return vars
-}
-
-function copyDir(src, dst, overwrite = false) {
-  if (!existsSync(src)) return
-  mkdirSync(dst, { recursive: true })
-  for (const entry of readdirSync(src)) {
-    const srcPath = join(src, entry)
-    const dstPath = join(dst, entry)
-    const stat = statSync(srcPath)
-    if (stat.isDirectory()) {
-      copyDir(srcPath, dstPath, overwrite)
-    } else {
-      if (existsSync(dstPath) && !overwrite) continue
-      copyFileSync(srcPath, dstPath)
-    }
-  }
-}
 
 
-let DRY_RUN = false
-
-function maybeWriteFile(filePath, content) {
-  if (DRY_RUN) {
-    console.log(`  ${YELLOW}[DRY-RUN] Escribiría: ${filePath}${RESET}`)
-    return
-  }
-  mkdirSync(dirname(filePath), { recursive: true })
-  writeFileSync(filePath, content)
-}
-
-function maybeCopyFile(src, dst) {
-  if (DRY_RUN) {
-    console.log(`  ${YELLOW}[DRY-RUN] Copiaría: ${src} → ${dst}${RESET}`)
-    return
-  }
-  copyFileSync(src, dst)
-}
-
-function maybeCopyDir(src, dst, overwrite = false) {
-  if (DRY_RUN) {
-    console.log(`  ${YELLOW}[DRY-RUN] Copiaría directorio: ${src} → ${dst}${RESET}`)
-    return
-  }
-  copyDir(src, dst, overwrite)
-}
-
-function maybeExecSync(cmd, opts) {
-  if (DRY_RUN) {
-    console.log(`  ${YELLOW}[DRY-RUN] Ejecutaría: ${cmd}${RESET}`)
-    return ''
-  }
-  return execSync(cmd, opts)
-}
-
-function maybeRmSync(p) {
-  if (DRY_RUN) {
-    console.log(`  ${YELLOW}[DRY-RUN] Eliminaría: ${p}${RESET}`)
-    return
-  }
-  try { rmSync(p) } catch {}
-}
-
-// ─── Poblado automático de bóveda ─────────────────────────────────
-
-function populateComandos(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🛠 Stack', 'Comandos.md')
-  const pkgPath = join(cwd, 'package.json')
-  if (!existsSync(pkgPath)) return false
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-  const scripts = pkg.scripts
-  if (!scripts || !Object.keys(scripts).length) return false
-
-  let md = `# Comandos\n\n**Propósito**: Referencia rápida de comandos útiles.\n\n---\n\n| Comando | Script |\n|---------|-------|\n`
-  for (const [name, cmd] of Object.entries(scripts)) {
-    md += `| \`${name}\` | \`${cmd}\` |\n`
-  }
-
-  // Append DB migration section if engine detected
-  const engine = detectDBEngine(cwd)
-  if (engine) {
-    md += getDBMigrationCommands(engine)
-  }
-
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateLibrerias(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🛠 Stack', 'Librerias.md')
-  const pkgPath = join(cwd, 'package.json')
-  if (!existsSync(pkgPath)) return false
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-  const deps = pkg.dependencies
-  const devDeps = pkg.devDependencies
-  if ((!deps || !Object.keys(deps).length) && (!devDeps || !Object.keys(devDeps).length)) return false
-
-  let md = `# Librerías y Stack\n\n**Propósito**: Dependencias del proyecto.\n\n---\n\n`
-
-  if (deps && Object.keys(deps).length) {
-    md += `## Producción\n\n| Paquete | Versión |\n|---------|--------|\n`
-    for (const [name, ver] of Object.entries(deps).sort()) {
-      md += `| ${name} | ${ver} |\n`
-    }
-    md += '\n'
-  }
-
-  if (devDeps && Object.keys(devDeps).length) {
-    md += `## Desarrollo\n\n| Paquete | Versión |\n|---------|--------|\n`
-    for (const [name, ver] of Object.entries(devDeps).sort()) {
-      md += `| ${name} | ${ver} |\n`
-    }
-    md += '\n'
-  }
-
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateEnvVars(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🛠 Stack', 'Variables de Entorno.md')
-  let envContent = null
-  for (const name of ['.env.example', '.env']) {
-    const p = join(cwd, name)
-    if (existsSync(p)) {
-      envContent = readFileSync(p, 'utf-8')
-      break
-    }
-  }
-  if (!envContent) return false
-
-  const vars = []
-  let currentDesc = ''
-  for (const line of envContent.split('\n')) {
-    const trimmed = line.trim()
-    if (trimmed.startsWith('#')) {
-      currentDesc = trimmed.replace(/^#\s*/, '')
-      continue
-    }
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=/)
-    if (match) {
-      const val = trimmed.includes('=') ? trimmed.split('=').slice(1).join('=') : ''
-      const required = val === '' || val === '""' || val === "''" || val === '<your-' ? 'Sí' : 'No'
-      vars.push({ key: match[1], required, desc: currentDesc || '—' })
-      currentDesc = ''
-    }
-  }
-
-  if (!vars.length) return false
-
-  let md = `# Variables de Entorno\n\n**Propósito**: Documentación de variables de entorno.\n\n---\n\n| Variable | Requerida | Descripción |\n|----------|-----------|-------------|\n`
-  for (const v of vars) {
-    md += `| \`${v.key}\` | ${v.required} | ${v.desc} |\n`
-  }
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateEstructura(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🏗 Arquitectura', 'Estructura.md')
-  const ignored = new Set(['node_modules', '.git', bovedaDir, '.graphify', 'graphify-visual', '.next', 'dist', 'build', '.cache'])
-  const maxDepth = 4
-
-  function walk(dir, prefix = '') {
-    let result = ''
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true })
-        .filter(e => !ignored.has(e.name) && !e.name.startsWith('.'))
-        .sort((a, b) => {
-          if (a.isDirectory() && !b.isDirectory()) return -1
-          if (!a.isDirectory() && b.isDirectory()) return 1
-          return a.name.localeCompare(b.name)
-        })
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i]
-        const isLast = i === entries.length - 1
-        const connector = isLast ? '└── ' : '├── '
-        result += `${prefix}${connector}${e.name}${e.isDirectory() ? '/' : ''}\n`
-        if (e.isDirectory()) {
-          const newPrefix = prefix + (isLast ? '    ' : '│   ')
-          result += walk(join(dir, e.name), newPrefix)
-        }
-      }
-    } catch {}
-    return result
-  }
-
-  const tree = walk(cwd)
-  if (!tree) return false
-
-  const md = `# Estructura del Proyecto\n\n**Propósito**: Mapa del árbol de directorios del proyecto.\n\n---\n\n\`\`\`\n${tree}\`\`\`\n`
-  writeBovedaSection(file, md)
-  return true
-}
-function populateAPIRoutes(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '📡 API', 'API Routes.md')
-  const routeDirs = [
-    join(cwd, 'app', 'api'),
-    join(cwd, 'pages', 'api'),
-    join(cwd, 'src', 'app', 'api'),
-    join(cwd, 'src', 'pages', 'api'),
-    join(cwd, 'src', 'routes'),
-    join(cwd, 'routes'),
-  ]
-
-  const httpMethodRe = /export\s+(async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\b/g
-
-  function findRoutes(dir, prefix = '') {
-    const routes = []
-    if (!existsSync(dir)) return routes
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true })
-      for (const e of entries) {
-        const full = join(dir, e.name)
-        if (e.isDirectory()) {
-          routes.push(...findRoutes(full, prefix ? `${prefix}/${e.name}` : e.name))
-        } else if (e.name.match(/^route\.(ts|js|tsx|jsx)$/) || e.name.match(/^.+\.route\.(ts|js)$/)) {
-          let methods = ['GET']
-          try {
-            const content = readFileSync(full, 'utf-8')
-            const found = [...content.matchAll(httpMethodRe)].map(m => m[2])
-            if (found.length > 0) methods = found
-          } catch {}
-          routes.push({ path: prefix || '', methods })
-        }
-      }
-    } catch {}
-    return routes
-  }
-
-  const allRoutes = []
-  for (const dir of routeDirs) {
-    allRoutes.push(...findRoutes(dir))
-  }
-
-  if (!allRoutes.length) return false
-
-  allRoutes.sort((a, b) => a.path.localeCompare(b.path))
-  let md = `# API Routes\n\n**Propósito**: Endpoints RESTful del sistema.\n\n---\n\n| Ruta | Métodos | Descripción |\n|------|---------|-------------|\n`
-  for (const r of allRoutes) {
-    md += `| \`${r.path}\` | ${r.methods.join(', ')} | (Pendiente) |\n`
-  }
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateFeatures(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🧩 Features', 'Index.md')
-  const srcDirs = [join(cwd, 'src'), join(cwd, 'lib'), join(cwd, 'app')]
-
-  const modules = []
-  for (const dir of srcDirs) {
-    if (!existsSync(dir)) continue
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true })
-      for (const e of entries) {
-        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'api' && e.name !== 'components' && e.name !== 'layouts') {
-          modules.push(e.name)
-        }
-      }
-    } catch {}
-  }
-
-  if (!modules.length) return false
-
-  const unique = [...new Set(modules)].sort()
-  let md = `# Features — Índice\n\n**Propósito**: Catálogo de todas las funcionalidades del sistema.\n\n---\n\n| Feature | Flujo | Descripción | Estado |\n|--------|-------|-------------|--------|\n`
-  for (const m of unique) {
-    md += `| ${m} | (Pendiente) | (Pendiente) | ✨ Detectado |\n`
-  }
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateServerActions(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '📡 API', 'Server Actions.md')
-  const searchDirs = [
-    join(cwd, 'src'),
-    join(cwd, 'app'),
-    join(cwd, 'lib'),
-    join(cwd, 'actions'),
-  ]
-
-  function scan(dir) {
-    const actions = []
-    if (!existsSync(dir)) return actions
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true })
-      for (const e of entries) {
-        const full = join(dir, e.name)
-        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-          actions.push(...scan(full))
-        } else if (e.name.match(/\.(ts|js|tsx|jsx)$/)) {
-          try {
-            const content = readFileSync(full, 'utf-8')
-            if (content.includes('"use server"') || content.includes("'use server'")) {
-              const rel = relative(cwd, full)
-              // Find exported function names
-              const funcs = [...content.matchAll(/export\s+(async\s+)?function\s+(\w+)/g)].map(m => m[2])
-              actions.push({ file: rel, functions: funcs.length > 0 ? funcs : ['(unknown)'] })
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-    return actions
-  }
-
-  const allActions = []
-  for (const dir of searchDirs) {
-    allActions.push(...scan(dir))
-  }
-
-  if (!allActions.length) return false
-
-  allActions.sort((a, b) => a.file.localeCompare(b.file))
-  let md = `# Server Actions\n\n**Propósito**: Catálogo de server actions del sistema.\n\n---\n\n| Archivo | Funciones exportadas |\n|---------|---------------------|\n`
-  for (const a of allActions) {
-    md += `| \`${a.file}\` | ${a.functions.join(', ')} |\n`
-  }
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateMiddleware(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const file = join(cwd, bovedaDir, '🏗 Arquitectura', 'Middleware y Auth.md')
-  const candidates = [
-    join(cwd, 'middleware.ts'),
-    join(cwd, 'src', 'middleware.ts'),
-    join(cwd, 'auth.ts'),
-    join(cwd, 'src', 'auth.ts'),
-    join(cwd, 'app', 'auth.config.ts'),
-    join(cwd, 'lib', 'auth.ts'),
-  ]
-
-  let found = null
-  for (const p of candidates) {
-    if (existsSync(p)) {
-      found = p
-      break
-    }
-  }
-  if (!found) return false
-
-  const rel = relative(cwd, found)
-  let content = ''
-  try { content = readFileSync(found, 'utf-8') } catch {}
-  const lines = content.split('\n').length
-
-  let md = `# Middleware y Flujo de Autenticación\n\n**Propósito**: Cómo se protegen las rutas y se gestiona la autenticación.\n\n---\n\n**Middleware detectado:** \`${rel}\` (${lines} líneas)\n\n`
-  // Detect auth patterns
-  const patterns = [
-    { name: 'NextAuth.js / Auth.js', re: /next-auth|@auth/ },
-    { name: 'Clerk', re: /@clerk/ },
-    { name: 'Lucia', re: /lucia/ },
-    { name: 'JWT manual', re: /jsonwebtoken|jwt/ },
-    { name: 'Session cookies', re: /session|cookie/ },
-    { name: 'Middleware matcher', re: /config\s*.*matcher/ },
-  ]
-
-  const detected = patterns.filter(p => p.re.test(content)).map(p => p.name)
-  if (detected.length > 0) {
-    md += `**Patrones detectados:** ${detected.join(', ')}\n\n`
-  }
-
-  md += `(Pendiente de documentar según el proyecto)\n`
-  writeBovedaSection(file, md)
-  return true
-}
-
-function populateVaultFiles(cwd) {
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const tasks = [
-    { name: 'Comandos', fn: () => populateComandos(cwd) },
-    { name: 'Librerías', fn: () => populateLibrerias(cwd) },
-    { name: 'Variables de Entorno', fn: () => populateEnvVars(cwd) },
-    { name: 'Estructura', fn: () => populateEstructura(cwd) },
-    { name: 'API Routes', fn: () => populateAPIRoutes(cwd) },
-    { name: 'Server Actions', fn: () => populateServerActions(cwd) },
-    { name: 'Middleware / Auth', fn: () => populateMiddleware(cwd) },
-    { name: 'Features', fn: () => populateFeatures(cwd) },
-  ]
-
-  let populated = 0
-  for (const t of tasks) {
-    try {
-      if (t.fn()) {
-        populated++
-        console.log(`  ${GREEN}✅ ${bovedaDir}/${t.name} poblado${RESET}`)
-      }
-    } catch (e) {
-      console.log(`  ${YELLOW}⚠️  ${bovedaDir}/${t.name}: ${e.message}${RESET}`)
-    }
-  }
-  if (populated > 0) console.log(`  ${GREEN}✅ Bóveda auto-poblada (${populated} secciones)${RESET}\n`)
-}
-
-// ─── Delta upgrade ────────────────────────────────────────────────
-
-
-function getGraphifyVersion(cwd) {
-  const data = readYoumindagData(cwd)
-  if (data.graphifyVersion) return data.graphifyVersion
-  const p = join(cwd, 'node_modules', '@sentropic', 'graphify', 'package.json')
-  if (existsSync(p)) {
-    try { return JSON.parse(readFileSync(p, 'utf-8')).version } catch {}
-  }
-  return null
-}
 
 function writeYoumindagVersion(cwd, graphifyVersion, bovedaDir) {
   const data = { version: VERSION, installedAt: new Date().toISOString() }
@@ -471,6 +43,11 @@ function writeYoumindagVersion(cwd, graphifyVersion, bovedaDir) {
   if (bovedaDir) data.bovedaDir = bovedaDir
   maybeWriteFile(join(cwd, YOUMINDAG_JSON), JSON.stringify(data, null, 2) + '\n')
 }
+
+
+
+
+
 
 
 function upgradeScriptsOpencode(cwd) {
@@ -513,8 +90,12 @@ function upgradeScriptsOpencode(cwd) {
   return changes
 }
 
+
+
+
+
 async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema) {
-  if (DRY_RUN) console.log(`  ${YELLOW}⚠️  Modo simulación (--dry-run) — no se escribirán archivos${RESET}\n`)
+  if (getDryRun()) console.log(`  ${YELLOW}⚠️  Modo simulación (--dry-run) — no se escribirán archivos${RESET}\n`)
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}`)
   console.log(`  ${BOLD}🔤 Lenguaje:${RESET} ${info.lang}`)
   if (info.framework !== info.lang) console.log(`  ${BOLD}⚙️  Framework:${RESET} ${info.framework}`)
@@ -575,7 +156,7 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   // Inject scripts/
   console.log(`${BOLD}📜 Instalando scripts de utilidad...${RESET}`)
   maybeCopyDir(join(TEMPLATE, 'scripts'), join(cwd, 'scripts'))
-  if (!DRY_RUN) ensureGitignoreEntries(cwd)
+  if (!getDryRun()) ensureGitignoreEntries(cwd)
   console.log(`  ${GREEN}✅ scripts/ instalados (load-context, extract-domain, export-schema)${RESET}\n`)
 
   // Backup + update AGENTS.md
@@ -613,7 +194,7 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
     }
     if (installed) {
       const p = join(cwd, 'node_modules', '@sentropic', 'graphify', 'package.json')
-      if (!DRY_RUN && existsSync(p)) {
+      if (!getDryRun() && existsSync(p)) {
         graphifyVersion = JSON.parse(readFileSync(p, 'utf-8')).version
       }
       console.log(`  ${GREEN}✅ graphify ${graphifyVersion || ''} instalado${RESET}\n`)
@@ -624,12 +205,12 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
 
   // Build graph
   const graphPath = join(cwd, '.graphify', 'graph.json')
-  if (DRY_RUN || existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify'))) {
+  if (getDryRun() || existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify'))) {
     console.log(`${BOLD}🌐 Construyendo grafo de conocimiento...${RESET}`)
     try {
       maybeExecSync('npx graphify detect . 2>/dev/null', { cwd, stdio: 'pipe', timeout: 30000 })
       maybeExecSync('npx graphify update . 2>&1 | tail -3', { cwd, stdio: 'pipe', timeout: 120000 })
-      if (!DRY_RUN && existsSync(graphPath)) {
+      if (!getDryRun() && existsSync(graphPath)) {
         const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
         const nodes = graph.nodes?.length || 0
         const edges = graph.edges?.length || 0
@@ -642,7 +223,7 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
 
   // Studio visual
   const studioPath = join(cwd, 'graphify-visual', 'studio.html')
-  if (!DRY_RUN && existsSync(graphPath)) {
+  if (!getDryRun() && existsSync(graphPath)) {
     if (!existsSync(studioPath)) {
       console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
       try {
@@ -675,9 +256,13 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   console.log(`  ${CYAN}El agente cargará el contexto automáticamente.${RESET}\n`)
 }
 
+
+
+
+
 async function upgrade(oldVersion, cwd, projectName) {
   const changes = []
-  if (DRY_RUN) console.log(`  ${YELLOW}⚠️  Modo simulación (--dry-run) — no se escribirán archivos${RESET}\n`)
+  if (getDryRun()) console.log(`  ${YELLOW}⚠️  Modo simulación (--dry-run) — no se escribirán archivos${RESET}\n`)
   console.log(`  ${BOLD}🔄 Upgrade:${RESET} v${oldVersion} → v${VERSION}`)
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}\n`)
 
@@ -685,7 +270,7 @@ async function upgrade(oldVersion, cwd, projectName) {
   const bovedaDirName = existingBoveda || `boveda-${kebabCase(projectName)}`
 
   // 1. AGENTS.md — merge via markers
-  const agentsResult = DRY_RUN ? 'simulado (dry-run)' : upgradeAgentsMd(cwd, TEMPLATE)
+  const agentsResult = getDryRun() ? 'simulado (dry-run)' : upgradeAgentsMd(cwd, TEMPLATE)
   changes.push(`📄 AGENTS.md — ${agentsResult}`)
 
   // 2. Bóveda — skip (user territory)
@@ -707,17 +292,17 @@ async function upgrade(oldVersion, cwd, projectName) {
   }
 
   // 3. Scripts + .opencode — overwrite
-  if (!DRY_RUN) mkdirSync(join(cwd, '.opencode'), { recursive: true })
+  if (!getDryRun()) mkdirSync(join(cwd, '.opencode'), { recursive: true })
   const fileChanges = upgradeScriptsOpencode(cwd)
   changes.push(...fileChanges.map(c => `📜 ${c}`))
 
   // 4. context-map.yaml — merge (preserve user entries)
-  if (!DRY_RUN) mkdirSync(join(cwd, '.opencode'), { recursive: true })
-  const ctxResult = DRY_RUN ? 'simulado (dry-run)' : mergeContextMap(cwd, TEMPLATE)
+  if (!getDryRun()) mkdirSync(join(cwd, '.opencode'), { recursive: true })
+  const ctxResult = getDryRun() ? 'simulado (dry-run)' : mergeContextMap(cwd, TEMPLATE)
   changes.push(`🔗 .opencode/context-map.yaml — ${ctxResult}`)
 
   // 5. .gitignore — ensure entries
-  if (!DRY_RUN) {
+  if (!getDryRun()) {
     ensureGitignoreEntries(cwd)
     changes.push('📂 .gitignore — entradas actualizadas')
   }
@@ -739,862 +324,15 @@ async function upgrade(oldVersion, cwd, projectName) {
   console.log(`${GREEN}${BOLD}  ✅ Proyecto actualizado a v${VERSION}${RESET}\n`)
 }
 
-// ─── Comandos CLI ──────────────────────────────────────────────
 
-function formatAsciiTable(rows) {
-  if (!rows || rows.length === 0) return '(sin resultados)\n'
-  const cols = Object.keys(rows[0])
-  const widths = cols.map(c => Math.max(c.length, ...rows.map(r => String(r[c] ?? 'NULL').length)))
-  const pad = (s, w) => ' ' + String(s).padEnd(w) + ' '
 
-  let result = ''
-  result += '┌' + widths.map(w => '─'.repeat(w + 2)).join('┬') + '┐\n'
-  result += '│' + cols.map((c, i) => pad(c, widths[i])).join('│') + '│\n'
-  result += '├' + widths.map(w => '─'.repeat(w + 2)).join('┼') + '┤\n'
-  for (const row of rows) {
-    result += '│' + cols.map((c, i) => pad(row[c] ?? 'NULL', widths[i])).join('│') + '│\n'
-  }
-  result += '└' + widths.map(w => '─'.repeat(w + 2)).join('┴') + '┘\n'
-  result += `\n${rows.length} ${rows.length === 1 ? 'fila' : 'filas'}\n`
-  return result
-}
 
-function replDb(pool) {
-  const readline = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: `${CYAN}db> ${RESET}`,
-  })
-
-  console.log(`${CYAN}Modo interactivo. Escribe una query SQL y presiona Enter.${RESET}`)
-  console.log(`${CYAN}Escribe \\q o presiona Ctrl+C para salir.${RESET}\n`)
-
-  readline.prompt()
-
-  readline.on('line', async (line) => {
-    const trimmed = line.trim()
-    if (trimmed === '\\q' || trimmed === 'exit' || trimmed === 'quit') {
-      readline.close()
-      return
-    }
-    if (!trimmed) {
-      readline.prompt()
-      return
-    }
-    try {
-      const result = await pool.query(trimmed)
-      if (result.rows && result.rows.length > 0) {
-        process.stdout.write(formatAsciiTable(result.rows))
-      } else {
-        console.log(`${GREEN}✅ Query ejecutada (${result.command}${result.rowCount !== null ? ', ' + result.rowCount + ' filas' : ''})${RESET}\n`)
-      }
-    } catch (e) {
-      console.log(`${YELLOW}Error: ${e.message}${RESET}\n`)
-    }
-    readline.prompt()
-  })
-
-  readline.on('close', async () => {
-    console.log(`\n${CYAN}👋 Saliendo...${RESET}`)
-    await pool.end()
-    process.exit(0)
-  })
-}
-
-async function cmdDb(cwd, query) {
-  const vars = parseEnvFile(cwd)
-  const dbUrl = vars.DATABASE_URL
-
-  if (!dbUrl) {
-    console.error(`${YELLOW}Error: DATABASE_URL no encontrada en .env${RESET}`)
-    console.error(`${YELLOW}   Asegúrate de tener un archivo .env con DATABASE_URL=postgres://...${RESET}`)
-    process.exit(1)
-  }
-
-  if (!hasPostgres(CWD)) {
-    console.error(`${YELLOW}Error: pg no encontrado en package.json${RESET}`)
-    console.error(`${YELLOW}   Instálalo con: npm install pg${RESET}`)
-    process.exit(1)
-  }
-
-  let pg
-  try {
-    pg = await import('pg')
-  } catch {
-    console.error(`${YELLOW}Error: No se pudo importar pg desde node_modules${RESET}`)
-    console.error(`${YELLOW}   Asegúrate de que pg esté instalado: npm install pg${RESET}`)
-    process.exit(1)
-  }
-
-  const pool = new pg.Pool({ connectionString: dbUrl })
-
-  if (!query) {
-    return replDb(pool)
-  }
-
-  try {
-    const result = await pool.query(query)
-    if (result.rows && result.rows.length > 0) {
-      process.stdout.write(formatAsciiTable(result.rows))
-    } else {
-      console.log(`${GREEN}✅ Query ejecutada (${result.command}${result.rowCount !== null ? ', ' + result.rowCount + ' filas' : ''})${RESET}`)
-    }
-  } catch (e) {
-    console.error(`${YELLOW}Error en la query: ${e.message}${RESET}`)
-    process.exit(1)
-  } finally {
-    await pool.end()
-  }
-}
-
-async function cmdTrace(cwd, args) {
-  const isClient = args.includes('--client')
-  const isServer = args.includes('--server')
-  const scriptName = isClient ? 'trace-client.mjs' : isServer ? 'trace-server.mjs' : 'trace-components.mjs'
-  const scriptPath = join(cwd, 'scripts', scriptName)
-
-  if (!existsSync(scriptPath)) {
-    console.error(`${YELLOW}Error: scripts/${scriptName} no encontrado${RESET}`)
-    console.error(`${YELLOW}   Ejecuta npx youmindag primero para instalar los scripts.${RESET}`)
-    process.exit(1)
-  }
-
-  const filteredArgs = args.filter(a => a !== '--server' && a !== '--client')
-  try {
-    execSync(`node "${scriptPath}" ${filteredArgs.join(' ')}`, { cwd, stdio: 'inherit' })
-  } catch {
-    process.exit(1)
-  }
-}
-
-function cmdStatus(cwd) {
-  const showJson = process.argv.includes('--json')
-
-  const oldVersion = readYoumindagVersion(cwd)
-  const isInstalled = !!oldVersion
-  const isUpToDate = oldVersion === VERSION
-  const staleBoveda = checkStaleBoveda(cwd, true)
-
-  if (showJson) {
-    const status = {
-      version: VERSION,
-      installed: isInstalled,
-      installedVersion: oldVersion || null,
-      upToDate: isUpToDate,
-      staleBoveda: staleBoveda || null,
-      hasBoveda: !!getBovedaDir(cwd),
-      hasDotOpendcode: existsSync(join(cwd, '.opencode', 'opencode.json')),
-      hasScripts: existsSync(join(cwd, 'scripts', 'load-context.mjs')),
-      hasGraphify: existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify')),
-      hasGraph: existsSync(join(cwd, '.graphify', 'graph.json')),
-    }
-    process.stdout.write(JSON.stringify(status, null, 2) + '\n')
-    return
-  }
-
-  console.log(`${BOLD}YouMindAG v${VERSION} — Estado${RESET}\n`)
-
-  if (isInstalled) {
-    if (isUpToDate) {
-      console.log(`  ${GREEN}✅ Versión actualizada (v${VERSION})${RESET}`)
-    } else {
-      console.log(`  ${YELLOW}⚠️  v${oldVersion} → v${VERSION} disponible${RESET}`)
-      console.log(`  ${YELLOW}   Ejecuta npx youmindag para actualizar${RESET}`)
-    }
-  } else {
-    console.log(`  ${YELLOW}⚠️  YouMindAG no instalado en este proyecto${RESET}`)
-    console.log(`  ${YELLOW}   Ejecuta npx youmindag para instalar${RESET}`)
-  }
-
-  checkStaleBoveda(cwd)
-  console.log()
-}
-
-function cmdUninstall(cwd) {
-  console.log(`${BOLD}YouMindAG v${VERSION} — Desinstalación${RESET}\n`)
-
-  const oldVersion = readYoumindagVersion(cwd)
-  if (!oldVersion) {
-    console.log(`  ${YELLOW}⚠️  YouMindAG no está instalado en este proyecto${RESET}\n`)
-    return
-  }
-
-  console.log(`  ${YELLOW}⚠️  Se eliminarán los siguientes archivos/directorios:${RESET}`)
-  const targets = []
-  const bovedaDir = getBovedaDir(cwd)
-  const check = (path, label) => { if (existsSync(path)) targets.push(label) }
-  if (bovedaDir) check(join(cwd, bovedaDir), `📚 ${bovedaDir}/ (bóveda de conocimiento)`)
-  // Legacy cleanup
-  if (existsSync(join(cwd, 'boveda')) && !bovedaDir) check(join(cwd, 'boveda'), '📚 boveda/ (bóveda legacy)')
-  check(join(cwd, '.opencode'), '🔧 .opencode/ (plugin + skills + context-map)')
-  check(join(cwd, 'scripts'), '📜 scripts/ (utilidades)')
-  check(join(cwd, '.youmindag'), '📁 .youmindag/ (sesión + estado)')
-  check(join(cwd, '.youmindag.json'), '📄 .youmindag.json (versión)')
-  check(join(cwd, '.graphify'), '🌐 .graphify/ (grafo de conocimiento)')
-  check(join(cwd, 'graphify-visual'), '🎨 graphify-visual/ (studio visual)')
-  check(join(cwd, 'AGENTS.md'), '📋 AGENTS.md (reglas del agente)')
-
-  for (const t of targets) console.log(`  ${t}`)
-  console.log()
-
-  // Git safety check — warn about uncommitted changes in targets
-  if (existsSync(join(cwd, '.git'))) {
-    try {
-      const bovedaGitPath = getBovedaDir(cwd) || 'boveda'
-      const dirty = String(execSync(`git status --porcelain ${bovedaGitPath}/ .opencode/ scripts/ AGENTS.md 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
-      if (dirty) {
-        const lines = dirty.split('\n').length
-        console.log(`  ${YELLOW}⚠️  ${lines} archivo${lines !== 1 ? 's' : ''} sin commitear en los directorios a eliminar:${RESET}`)
-        for (const line of dirty.split('\n').slice(0, 5)) {
-          console.log(`     ${line}`)
-        }
-        if (dirty.split('\n').length > 5) console.log(`     ... y ${dirty.split('\n').length - 5} más`)
-        console.log(`  ${YELLOW}   Se perderán si no están commiteados.${RESET}\n`)
-      }
-    } catch {}
-  }
-
-  const readline = createInterface({ input: process.stdin, output: process.stdout })
-  readline.question(`  ${YELLOW}¿Continuar con la desinstalación? (y/N)${RESET} `, (answer) => {
-    readline.close()
-    if (!answer || !answer.toLowerCase().startsWith('y')) {
-      console.log(`  ${YELLOW}Cancelado.${RESET}\n`)
-      return
-    }
-
-    const dirsToRemove = ['.youmindag', '.opencode', 'scripts', '.graphify', 'graphify-visual']
-    const bd = getBovedaDir(cwd)
-    if (bd) dirsToRemove.push(bd)
-    if (existsSync(join(cwd, 'boveda'))) dirsToRemove.push('boveda') // legacy
-    for (const dir of dirsToRemove) {
-      const full = join(cwd, dir)
-      if (existsSync(full)) {
-        try { rmSync(full, { recursive: true, force: true }); console.log(`  ${GREEN}✅ Eliminado: ${dir}${RESET}`) }
-        catch { console.log(`  ${YELLOW}⚠️  No se pudo eliminar: ${dir}${RESET}`) }
-      }
-    }
-
-    const ymJson = join(cwd, '.youmindag.json')
-    if (existsSync(ymJson)) {
-      try { rmSync(ymJson); console.log(`  ${GREEN}✅ Eliminado: .youmindag.json${RESET}`) } catch {}
-    }
-
-    const agentsPath = join(cwd, 'AGENTS.md')
-    if (existsSync(agentsPath)) {
-      try {
-        const content = readFileSync(agentsPath, 'utf-8')
-        if (content.includes('<!-- BEGIN:youmindag -->')) {
-          const begin = content.indexOf('<!-- BEGIN:youmindag -->')
-          const end = content.indexOf('<!-- END:youmindag -->')
-          if (begin !== -1 && end !== -1) {
-            const stripped = content.slice(0, begin) + content.slice(end + '<!-- END:youmindag -->'.length)
-            writeFileSync(agentsPath, stripped.trimStart())
-            console.log(`  ${GREEN}✅ Marcadores YouMindAG retirados de AGENTS.md${RESET}`)
-          }
-        } else {
-          rmSync(agentsPath)
-          console.log(`  ${GREEN}✅ Eliminado: AGENTS.md${RESET}`)
-        }
-        const bakPath = join(cwd, 'AGENTS.md.bak')
-        if (existsSync(bakPath)) { rmSync(bakPath); console.log(`  ${GREEN}✅ Eliminado: AGENTS.md.bak${RESET}`) }
-      } catch { console.log(`  ${YELLOW}⚠️  No se pudo procesar AGENTS.md${RESET}`) }
-    }
-
-    const pkgPath = join(cwd, 'package.json')
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-        if (pkg.dependencies?.['@sentropic/graphify']) {
-          delete pkg.dependencies['@sentropic/graphify']
-          writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-          console.log(`  ${GREEN}✅ @sentropic/graphify retirado de package.json${RESET}`)
-        }
-        if (pkg.scripts?.dev === 'node scripts/ym-dev.mjs') {
-          delete pkg.scripts.dev
-          writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-          console.log(`  ${YELLOW}⚠️  Dev script restaurado (vuelve a configurarlo manualmente)${RESET}`)
-        }
-      } catch {}
-    }
-
-    try { cleanGitignoreEntries(cwd); console.log(`  ${GREEN}✅ Entradas de .gitignore limpiadas${RESET}`) } catch {}
-
-    console.log(`\n  ${GREEN}${BOLD}✅ YouMindAG desinstalado.${RESET}`)
-    console.log(`  ${CYAN}   Para eliminar node_modules/@sentropic/graphify: npm uninstall @sentropic/graphify${RESET}\n`)
-  })
-}
-
-function checkStaleBoveda(cwd, returnResult = false) {
-  if (!existsSync(join(cwd, '.git'))) return returnResult ? null : undefined
-
-  try {
-    const bovedaGitPath = getBovedaDir(cwd) || 'boveda'
-    const bovedaLog = String(execSync(`git log --oneline -1 -- ${bovedaGitPath}/ 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
-    const srcDirs = ['app/', 'lib/', 'src/', 'components/']
-    let sourceLog = ''
-    for (const dir of srcDirs) {
-      if (existsSync(join(cwd, dir.replace('/', '')))) {
-        sourceLog = String(execSync(`git log --oneline -1 -- ${dir} 2>/dev/null || true`, { cwd, encoding: 'utf-8' })).trim()
-        if (sourceLog) break
-      }
-    }
-
-    if (!bovedaLog || !sourceLog) return returnResult ? null : undefined
-
-    const bovedaCommit = bovedaLog.split(' ')[0]
-    const sourceCommit = sourceLog.split(' ')[0]
-
-    if (bovedaCommit === sourceCommit) return returnResult ? null : undefined
-
-    const countStr = String(execSync(`git rev-list --count ${bovedaCommit}..${sourceCommit} 2>/dev/null || echo 0`, { cwd, encoding: 'utf-8' })).trim()
-    const count = parseInt(countStr, 10) || 0
-
-    if (count > 0) {
-      if (returnResult) return { count, bovedaLog, sourceLog }
-      console.log(`  ${YELLOW}⚠️  ${bovedaGitPath}/ está ${count} commit${count === 1 ? '' : 's'} atrasada respecto al código fuente${RESET}`)
-      console.log(`  ${YELLOW}   Último cambio en bóveda:  ${bovedaLog}${RESET}`)
-      console.log(`  ${YELLOW}   Último cambio en source: ${sourceLog}${RESET}`)
-      console.log()
-    }
-  } catch {}
-  return returnResult ? null : undefined
-}
-
-// ─── Dev script wrapper ─────────────────────────────────────────
-
-function isDevScriptWrapped(cwd) {
-  try {
-    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'))
-    return (pkg.scripts?.dev || '').startsWith('node scripts/ym-dev.mjs')
-  } catch { return false }
-}
-
-function wrapDevScript(cwd) {
-  const pkgPath = join(cwd, 'package.json')
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-  const original = pkg.scripts?.dev
-  if (!original) {
-    console.log(`  ${YELLOW}⚠️  No se encontró un script "dev" en package.json${RESET}\n`)
-    return false
-  }
-  if (original.startsWith('node scripts/ym-dev.mjs')) {
-    console.log(`  ${YELLOW}⚠️  El dev script ya está envuelto${RESET}\n`)
-    return false
-  }
-
-  mkdirSync(join(cwd, '.youmindag'), { recursive: true })
-  writeFileSync(join(cwd, '.youmindag', 'dev-original.txt'), original + '\n')
-  pkg.scripts.dev = 'node scripts/ym-dev.mjs'
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-  console.log(`  ${GREEN}✅ Dev script envuelto${RESET}`)
-  console.log(`  ${CYAN}   Original: ${original}${RESET}`)
-  console.log(`  ${CYAN}   Los logs se capturarán automáticamente en .youmindag/dev.log${RESET}\n`)
-  return true
-}
-
-function unwrapDevScript(cwd) {
-  const origPath = join(cwd, '.youmindag', 'dev-original.txt')
-  if (!existsSync(origPath)) {
-    console.log(`  ${YELLOW}⚠️  No hay dev script envuelto (falta .youmindag/dev-original.txt)${RESET}\n`)
-    return false
-  }
-
-  const pkgPath = join(cwd, 'package.json')
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-  const original = readFileSync(origPath, 'utf-8').trim()
-
-  pkg.scripts.dev = original
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-  try { execSync(`rm "${origPath}"`, { cwd }) } catch {}
-  console.log(`  ${GREEN}✅ Dev script restaurado${RESET}`)
-  console.log(`  ${CYAN}   Script: ${original}${RESET}\n`)
-  return true
-}
-
-// ─── youmindag dev ──────────────────────────────────────────────
-
-function readYoumindagData(cwd) {
-  const p = join(cwd, YOUMINDAG_JSON)
-  if (!existsSync(p)) return {}
-  try { return JSON.parse(readFileSync(p, 'utf-8')) } catch { return {} }
-}
-
-function writeYoumindagData(cwd, data) {
-  maybeWriteFile(join(cwd, YOUMINDAG_JSON), JSON.stringify(data, null, 2) + '\n')
-}
-
-function findDevProcess(cwd) {
-  try {
-    const out = String(execSync('pgrep -f "next dev" 2>/dev/null || true', { cwd, encoding: 'utf-8' })).trim()
-    if (out) {
-      const pids = out.split('\n').filter(Boolean)
-      return pids[0]
-    }
-  } catch {}
-  return null
-}
-
-function cmdDev(cwd, args) {
-  const showStatus = args.includes('--status')
-  const doRestart = args.includes('--restart')
-  const showLogs = args.includes('--logs')
-  const doWrap = args.includes('--wrap')
-  const doUnwrap = args.includes('--unwrap')
-  const logFile = join(cwd, '.youmindag', 'dev.log')
-
-  if (doWrap) return wrapDevScript(cwd)
-  if (doUnwrap) return unwrapDevScript(cwd)
-
-  if (!showStatus && !doRestart && !showLogs) {
-    console.log(`${YELLOW}Uso: youmindag dev --status | --restart | --logs${RESET}\n`)
-    return
-  }
-
-  if (showLogs) {
-    if (!existsSync(logFile)) {
-      const runningPid = findDevProcess(cwd)
-      if (runningPid) {
-        console.log(`${YELLOW}⚠️  next dev está corriendo (PID ${runningPid}) pero no fue iniciado por youmindag.${RESET}`)
-        console.log(`${YELLOW}   Usa youmindag dev --restart para capturar los logs automáticamente.${RESET}\n`)
-      } else {
-        console.log(`${YELLOW}No hay logs disponibles. Inicia el dev server con --restart primero.${RESET}\n`)
-      }
-      return
-    }
-    const lines = readFileSync(logFile, 'utf-8').split('\n')
-    const tail = lines.slice(-30).join('\n')
-    console.log(`${CYAN}── Dev server logs (últimas 30 líneas) ──${RESET}\n`)
-    console.log(tail || '(vacío)')
-    console.log()
-    return
-  }
-
-  const data = readYoumindagData(cwd)
-
-  if (showStatus) {
-    const pid = data.devPid || findDevProcess(cwd)
-    if (!pid) {
-      console.log(`${YELLOW}No hay dev server corriendo. Usa --restart para iniciarlo.${RESET}\n`)
-      return
-    }
-
-    const alive = findDevProcess(cwd) || pid
-    let uptime = '?'
-    if (alive && data.devStartedAt) {
-      uptime = Math.floor((Date.now() - new Date(data.devStartedAt).getTime()) / 1000 / 60)
-    }
-
-    console.log(`${GREEN}✅ Dev server corriendo (PID ${alive})${RESET}`)
-    console.log(`${GREEN}   Uptime: ~${uptime} min${RESET}`)
-    if (data.devPid) {
-      console.log(`${GREEN}   Logs: ${logFile}${RESET}`)
-    } else {
-      console.log(`${YELLOW}   Logs: no disponibles (inicia con --restart para capturarlos)${RESET}`)
-    }
-    const isWrapped = isDevScriptWrapped(cwd)
-    console.log(`${isWrapped ? GREEN : YELLOW}   Dev script: ${isWrapped ? 'envuelto (logs automáticos)' : 'no envuelto (youmindag dev --wrap)'}${RESET}`)
-    console.log()
-    return
-  }
-
-  if (doRestart) {
-    const existingPid = data.devPid || findDevProcess(cwd)
-    if (existingPid) {
-      try {
-        execSync(`kill -TERM ${existingPid} 2>/dev/null || true`, { cwd })
-        console.log(`${YELLOW}🔪 Dev server anterior detenido (PID ${existingPid})${RESET}`)
-      } catch {}
-      try { execSync(`kill -9 ${existingPid} 2>/dev/null || true`, { cwd }) } catch {}
-    }
-
-    mkdirSync(dirname(logFile), { recursive: true })
-    const logFd = openSync(logFile, 'w')
-    closeSync(logFd)
-
-    const pkg = existsSync(join(cwd, 'package.json'))
-      ? JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'))
-      : {}
-
-    const devCmd = pkg.scripts?.dev || 'next dev'
-
-    console.log(`${CYAN}🚀 Iniciando: npm run dev${RESET}`)
-    console.log(`${CYAN}   Logs: ${logFile}${RESET}\n`)
-
-    const child = spawn('npx', devCmd.split(' '), {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-      detached: true,
-    })
-
-    const logStream = (stream) => {
-      let buffer = ''
-      stream.on('data', (chunk) => {
-        buffer += chunk.toString()
-        const lines = buffer.split('\n')
-        buffer = lines.pop()
-        for (const line of lines) {
-          appendFileSync(logFile, `[${new Date().toISOString().slice(11, 19)}] ${line}\n`)
-        }
-      })
-      stream.on('end', () => {
-        if (buffer) appendFileSync(logFile, `[${new Date().toISOString().slice(11, 19)}] ${buffer}\n`)
-      })
-    }
-
-    logStream(child.stdout)
-    logStream(child.stderr)
-
-    data.devPid = child.pid
-    data.devStartedAt = new Date().toISOString()
-    writeYoumindagData(cwd, data)
-
-    child.unref()
-
-    setTimeout(() => {
-      console.log(`${GREEN}✅ Dev server iniciado (PID ${child.pid})${RESET}`)
-      console.log(`${GREEN}   Logs: ${logFile}${RESET}`)
-      console.log(`${CYAN}   youmindag dev --logs para ver la salida${RESET}\n`)
-    }, 2000)
-  }
-}
-
-// ─── youmindag watch ────────────────────────────────────────────
-
-function cmdWatch(cwd, args) {
-  console.log(`${CYAN}${BOLD}YouMindAG — Watch mode${RESET}\n`)
-
-  const usePoll = args.includes('--poll')
-  let watchTimer = null
-  const DEBOUNCE_MS = 500
-  const watchers = new Map()
-
-  function closeWatcher(path) {
-    if (watchers.has(path)) {
-      try { watchers.get(path).close() } catch {}
-      watchers.delete(path)
-    }
-  }
-
-  function onChange() {
-    if (watchTimer) clearTimeout(watchTimer)
-    watchTimer = setTimeout(() => {
-      watchTimer = null
-      console.log(`  ${YELLOW}📝 Cambio detectado — repoblando bóveda...${RESET}`)
-      populateVaultFiles(cwd)
-    }, DEBOUNCE_MS)
-  }
-
-  function watchDirTree(dir) {
-    if (watchers.has(dir)) return
-    try {
-      const w = watch(dir, (eventType, filename) => {
-        if (eventType === 'rename' && filename) {
-          const fullPath = join(dir, filename)
-          if (existsSync(fullPath)) {
-            try {
-              if (statSync(fullPath).isDirectory()) watchDirTree(fullPath)
-            } catch {}
-          } else {
-            closeWatcher(fullPath)
-          }
-        }
-        onChange()
-      })
-      watchers.set(dir, w)
-      const entries = readdirSync(dir, { withFileTypes: true })
-      for (const e of entries) {
-        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-          watchDirTree(join(dir, e.name))
-        }
-      }
-    } catch {}
-  }
-
-  const targets = [
-    join(cwd, 'package.json'),
-    join(cwd, '.env'),
-    join(cwd, '.env.example'),
-    join(cwd, 'middleware.ts'),
-    join(cwd, 'src', 'middleware.ts'),
-    join(cwd, 'auth.ts'),
-    join(cwd, 'src', 'auth.ts'),
-  ]
-
-  for (const t of targets) {
-    if (existsSync(t)) watch(t, () => onChange())
-  }
-
-  const srcDirs = ['src', 'app', 'lib', 'pages', 'actions']
-  for (const dir of srcDirs) {
-    const full = join(cwd, dir)
-    if (existsSync(full)) watchDirTree(full)
-  }
-
-  console.log(`  ${CYAN}👀 Observando cambios en archivos del proyecto...`)
-  console.log(`  ${CYAN}   Presiona Ctrl+C para detener.${RESET}\n`)
-
-  if (usePoll) {
-    console.log(`  ${YELLOW}ℹ️  Polling activo cada 2s${RESET}\n`)
-  }
-
-  process.on('SIGINT', () => {
-    console.log(`\n  ${CYAN}👋 Watch mode detenido.${RESET}\n`)
-    process.exit(0)
-  })
-}
-
-// ─── youmindag sync ──────────────────────────────────────────────
-
-function cmdSync(cwd, args) {
-  const doHook = args.includes('--hook')
-  console.log(`${CYAN}${BOLD}YouMindAG — Sync${RESET}\n`)
-
-  if (doHook) {
-    const hookPath = join(cwd, '.git', 'hooks', 'post-merge')
-    const hookScript = `#!/bin/sh\n# YouMindAG — auto sync after git pull/merge\nnpx graphify detect . 2>/dev/null && npx graphify update . 2>/dev/null && node scripts/populate-vault.mjs 2>/dev/null\necho "[YouMindAG] ✅ Contexto sincronizado post-merge"\n`
-    try {
-      mkdirSync(dirname(hookPath), { recursive: true })
-      writeFileSync(hookPath, hookScript)
-      execSync(`chmod +x "${hookPath}"`, { cwd })
-      console.log(`  ${GREEN}✅ Git hook post-merge instalado${RESET}`)
-      console.log(`  ${CYAN}   ${hookPath}${RESET}`)
-      console.log(`  ${CYAN}   Ahora cada git pull dispara sync automáticamente.${RESET}\n`)
-    } catch (e) {
-      console.log(`  ${YELLOW}⚠️  No se pudo instalar el hook: ${e.message}${RESET}\n`)
-    }
-    return
-  }
-
-  const steps = [
-    { cmd: 'npx graphify detect . 2>/dev/null', label: '🔍 Detectando archivos...' },
-    { cmd: 'npx graphify update . 2>/dev/null', label: '🌐 Reconstruyendo grafo...' },
-    { cmd: 'node scripts/populate-vault.mjs 2>/dev/null', label: '📚 Actualizando bóveda...' },
-  ]
-
-  for (const step of steps) {
-    console.log(`  ${CYAN}${step.label}${RESET}`)
-    try {
-      execSync(step.cmd, { cwd, stdio: 'pipe', timeout: 60000 })
-    } catch { /* non-fatal */ }
-  }
-
-  const graphPath = join(cwd, '.graphify', 'graph.json')
-  if (existsSync(graphPath)) {
-    try {
-      const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
-      console.log(`  ${GREEN}✅ Sincronización completa — ${graph.nodes?.length || 0} nodos, ${graph.edges?.length || 0} aristas${RESET}\n`)
-    } catch {}
-  } else {
-    console.log(`  ${GREEN}✅ Bóveda actualizada${RESET}\n`)
-  }
-}
-
-// ─── youmindag references ────────────────────────────────────────
-
-function findProjectFiles(cwd) {
-  const searchDirs = ['app', 'lib', 'src', 'components', 'pages']
-  const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
-  const files = []
-
-  function walk(dir) {
-    if (!existsSync(dir)) return
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-        const full = join(dir, entry.name)
-        if (entry.isDirectory()) {
-          walk(full)
-        } else if (extensions.has(extname(entry.name))) {
-          files.push(full)
-        }
-      }
-    } catch {}
-  }
-
-  for (const dir of searchDirs) {
-    walk(join(cwd, dir))
-  }
-  return files
-}
-
-function cmdReferences(cwd, symbol) {
-  if (!symbol) {
-    console.error(`${YELLOW}Uso: youmindag references <simbolo>${RESET}`)
-    console.error(`${YELLOW}Ej: youmindag references requireOperador${RESET}\n`)
-    process.exit(1)
-  }
-
-  console.log(`${CYAN}🔍 Buscando referencias de: ${symbol}${RESET}\n`)
-
-  const files = findProjectFiles(cwd)
-  const results = []
-
-  const wordBoundary = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
-
-  for (const file of files) {
-    try {
-      const content = readFileSync(file, 'utf-8')
-      const lines = content.split('\n')
-      for (let i = 0; i < lines.length; i++) {
-        if (wordBoundary.test(lines[i]) && !lines[i].trim().startsWith('//') && !lines[i].trim().startsWith('*')) {
-          const rel = relative(cwd, file)
-          const snippet = lines[i].trim().slice(0, 60) + (lines[i].trim().length > 60 ? '…' : '')
-          results.push({ file: rel, line: i + 1, snippet })
-        }
-      }
-    } catch {}
-  }
-
-  if (results.length === 0) {
-    console.log(`${YELLOW}No se encontraron referencias.${RESET}\n`)
-    return
-  }
-
-  const fileWidth = Math.max('Archivo'.length, ...results.map(r => r.file.length))
-  const lineWidth = Math.max('Línea'.length, ...results.map(r => String(r.line).length))
-  const snippetWidth = Math.max('Contexto'.length, ...results.map(r => r.snippet.length))
-
-  const c1 = fileWidth + 2
-  const c2 = lineWidth + 2
-  const c3 = snippetWidth + 2
-
-  let out = ''
-  out += '┌' + '─'.repeat(c1) + '┬' + '─'.repeat(c2) + '┬' + '─'.repeat(c3) + '┐\n'
-  out += '│ ' + 'Archivo'.padEnd(fileWidth) + ' │ ' + 'Línea'.padEnd(lineWidth) + ' │ ' + 'Contexto'.padEnd(snippetWidth) + ' │\n'
-  out += '├' + '─'.repeat(c1) + '┼' + '─'.repeat(c2) + '┼' + '─'.repeat(c3) + '┤\n'
-
-  for (const r of results) {
-    out += '│ ' + r.file.padEnd(fileWidth) + ' │ ' + String(r.line).padStart(lineWidth) + ' │ ' + r.snippet.padEnd(snippetWidth) + ' │\n'
-  }
-
-  out += '└' + '─'.repeat(c1) + '┴' + '─'.repeat(c2) + '┴' + '─'.repeat(c3) + '┘\n'
-  out += `\n${results.length} referencia${results.length === 1 ? '' : 's'} en ${new Set(results.map(r => r.file)).size} archivo${new Set(results.map(r => r.file)).size === 1 ? '' : 's'}\n`
-
-  process.stdout.write(out)
-}
-
-// ─── youmindag context ───────────────────────────────────────────
-
-function cmdContext(cwd, subArgs) {
-  const loadIdx = subArgs.indexOf('--load')
-  const moduleName = loadIdx !== -1 ? subArgs[loadIdx + 1] : null
-
-  if (!moduleName) {
-    console.error(`${YELLOW}Uso: youmindag context --load <modulo>${RESET}\n`)
-    process.exit(1)
-  }
-
-  console.log(`${CYAN}📋 Contexto para: ${moduleName}${RESET}\n`)
-
-  const contextMapPath = join(cwd, '.opencode', 'context-map.yaml')
-  let fromMap = false
-
-  if (existsSync(contextMapPath)) {
-    try {
-      const yaml = readFileSync(contextMapPath, 'utf-8')
-      const section = yaml.split('\n').reduce((acc, line) => {
-        if (line.match(/^\S/)) acc.current = line.trim()
-        if (acc.current && acc.current.toLowerCase().includes(moduleName.toLowerCase())) {
-          acc.lines.push(line)
-        }
-        return acc
-      }, { current: null, lines: [] })
-
-      if (section.lines.length > 0) {
-        fromMap = true
-        console.log(`${GREEN}📄 Detectado en context-map.yaml:${RESET}`)
-        for (const l of section.lines) {
-          console.log(`  ${l.trim()}`)
-        }
-        console.log()
-      }
-    } catch {}
-  }
-
-  // Heuristic fallback
-  const bovedaDir = getBovedaDir(cwd) || 'boveda'
-  const bovedaFile = join(cwd, bovedaDir, '🧩 Features', `${moduleName}.md`)
-  if (existsSync(bovedaFile)) {
-    const lines = readFileSync(bovedaFile, 'utf-8').split('\n').length
-    console.log(`${GREEN}📄 Documentación: ${bovedaDir}/🧩 Features/${moduleName}.md (${lines} líneas)${RESET}`)
-  }
-
-  const srcDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
-  for (const dir of srcDirs) {
-    if (existsSync(dir)) {
-      const files = readdirSync(dir, { recursive: true }).filter(f => extname(f).match(/\.(ts|tsx|js|jsx)$/)).length
-      console.log(`${GREEN}📁 Código: ${relative(cwd, dir)}/ (${files} archivos)${RESET}`)
-    }
-  }
-
-  const appDirs = [join(cwd, 'app'), join(cwd, 'src', 'app')]
-  for (const appDir of appDirs) {
-    if (existsSync(appDir)) {
-      const matches = readdirSync(appDir, { recursive: true, withFileTypes: true })
-        .filter(e => e.isDirectory() && e.name.toLowerCase().includes(moduleName.toLowerCase()))
-      for (const m of matches) {
-        const full = join(m.parentPath || appDir, m.name)
-        console.log(`${GREEN}🖥  Vistas: ${relative(cwd, full)}/${RESET}`)
-      }
-    }
-  }
-
-  if (!fromMap) {
-    console.log(`${GREEN}🔍 Graphify: graphify query "${moduleName}"${RESET}`)
-  }
-
-  console.log(`\n${CYAN}📖 Carga sugerida para el modelo:${RESET}`)
-  if (existsSync(bovedaFile)) {
-    console.log(`  ${CYAN}1.${RESET} ${bovedaDir}/🧩 Features/${moduleName}.md`)
-  }
-  const codeDirs = [join(cwd, 'lib', moduleName), join(cwd, 'app', moduleName), join(cwd, 'src', moduleName)]
-  for (const dir of codeDirs) {
-    if (!existsSync(dir)) continue
-    const typeFile = [join(dir, 'types.ts'), join(dir, 'types.tsx')].find(f => existsSync(f))
-    const mainFile = [join(dir, 'actions.ts'), join(dir, 'service.ts'), join(dir, 'index.ts')].find(f => existsSync(f))
-    if (typeFile) console.log(`  ${CYAN}2.${RESET} ${relative(cwd, typeFile)}`)
-    if (mainFile) console.log(`  ${CYAN}3.${RESET} ${relative(cwd, mainFile)}`)
-  }
-  console.log()
-}
-
-function showHelp() {
-  console.log(`\n${BOLD}${CYAN}🧠 YouMindAG v${VERSION}${RESET}`)
-  console.log(`${CYAN}Inyecta inteligencia de contexto a cualquier proyecto.${RESET}\n`)
-  console.log(`${BOLD}Uso:${RESET}`)
-  console.log(`  npx youmindag                           Instalar o actualizar el proyecto`)
-  console.log(`  npx youmindag --dry-run                 Simular instalación (sin escribir)`)
-  console.log(`  npx youmindag db "SELECT ..."           Ejecutar query SQL contra la BD`)
-  console.log(`  npx youmindag db                        Modo interactivo REPL de BD`)
-  console.log(`  npx youmindag dev --status              Ver estado del servidor de desarrollo`)
-  console.log(`  npx youmindag dev --restart             Reiniciar el servidor de desarrollo`)
-  console.log(`  npx youmindag dev --logs                Ver logs del servidor de desarrollo`)
-  console.log(`  npx youmindag dev --wrap                Envolver dev script para capturar logs automáticos`)
-  console.log(`  npx youmindag dev --unwrap              Restaurar dev script original`)
-  console.log(`  npx youmindag references <simbolo>      Buscar referencias de un símbolo en el código`)
-  console.log(`  npx youmindag context --load <modulo>   Cargar contexto de un módulo`)
-  console.log(`  npx youmindag trace --client "Comp"     Rastrear hooks (useEffect/useState) en componente cliente`)
-  console.log(`  npx youmindag trace --components "A,B"  Inyectar lifecycle tracker en UI (React)`)
-  console.log(`  npx youmindag trace --server "fn1,fn2"  Inyectar tracer en funciones server-side`)
-  console.log(`  npx youmindag trace --undo              Restaurar todos los archivos originales`)
-  console.log(`  npx youmindag trace --force             Ignorar advertencia de cambios sin commit`)
-  console.log(`  npx youmindag status                    Verificar estado de la bóveda`)
-  console.log(`  npx youmindag status --json             Estado en formato JSON`)
-  console.log(`  npx youmindag watch                     Observar cambios y repoblar bóveda automáticamente`)
-  console.log(`  npx youmindag watch --poll              Watch con polling (para sistemas de archivos remotos)`)
-  console.log(`  npx youmindag sync                      Sincronizar grafo y bóveda (post git pull/merge)`)
-  console.log(`  npx youmindag sync --hook               Instalar git hook post-merge para sync automático`)
-  console.log(`  npx youmindag uninstall                 Desinstalar YouMindAG del proyecto`)
-  console.log(`  npx youmindag help                      Mostrar esta ayuda`)
-  console.log()
-}
 
 async function main() {
   const args = process.argv.slice(2)
   const dryRunIdx = args.indexOf('--dry-run')
   if (dryRunIdx !== -1) {
-    DRY_RUN = true
+    setDryRun(true)
     args.splice(dryRunIdx, 1)
   }
   const subcommand = args[0]
@@ -1670,4 +408,3 @@ main().catch(e => {
   process.exit(1)
 })
 }
-
