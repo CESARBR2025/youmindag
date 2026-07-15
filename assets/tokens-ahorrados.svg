@@ -1,0 +1,34 @@
+<svg viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Gráfica comparando tokens de contexto: 30,033 sin YouMindAG contra 9,137 con YouMindAG, una reducción del 70%, en el caso real Parrilla Norteña Soft">
+  <title>Tokens de contexto: antes y después de YouMindAG</title>
+  <desc>Caso real: Parrilla Norteña Soft, 149 archivos, 26,000 líneas. Sin YouMindAG: 30,033 tokens de descubrimiento. Con YouMindAG: 9,137 tokens. Reducción del 70%.</desc>
+
+  <rect x="0" y="0" width="1200" height="630" fill="#0B0F19" />
+
+  <text x="60" y="66" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="30" font-weight="700" fill="#F3F4F6">Menos tokens, mismo contexto</text>
+  <text x="60" y="98" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#9CA3AF">Caso real: Parrilla Norteña Soft — 149 archivos, 26,000 líneas</text>
+
+  <line x1="60" y1="480" x2="1140" y2="480" stroke="#2A2F3A" stroke-width="1" />
+
+  <!-- Barra: sin YouMindAG -->
+  <rect x="380" y="190" width="180" height="290" rx="6" fill="#3A2E2E" stroke="#7A4A4A" stroke-width="1.5" />
+  <text x="470" y="170" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="34" font-weight="700" fill="#E8A7A0">30,033</text>
+  <text x="470" y="512" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#9CA3AF">sin YouMindAG</text>
+  <text x="470" y="534" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#6B7280">tokens de descubrimiento</text>
+
+  <!-- Barra: con YouMindAG -->
+  <rect x="660" y="391.77" width="180" height="88.23" rx="6" fill="#0F3D3B" stroke="#22D3B8" stroke-width="1.5" />
+  <text x="750" y="371.77" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="34" font-weight="700" fill="#5EEAD4">9,137</text>
+  <text x="750" y="512" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#9CA3AF">con YouMindAG</text>
+  <text x="750" y="534" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#6B7280">tokens de descubrimiento</text>
+
+  <!-- Callout -70% -->
+  <g>
+    <rect x="920" y="240" width="220" height="120" rx="10" fill="#0F3D3B" stroke="#22D3B8" stroke-width="1.5" />
+    <text x="1030" y="305" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="46" font-weight="700" fill="#5EEAD4">-70%</text>
+    <text x="1030" y="332" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#9CA3AF">tokens ahorrados</text>
+  </g>
+
+  <line x1="60" y1="580" x2="1140" y2="580" stroke="#2A2F3A" stroke-width="1" />
+  <text x="60" y="608" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#6B7280">npx youmindag</text>
+  <text x="1140" y="608" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#4B5563">github.com/CESARBR2025/youmindag</text>
+</svg>

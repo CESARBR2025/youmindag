@@ -41,6 +41,10 @@
 No usamos las cifras de npm ("+2,000 instalaciones") porque probablemente están infladas por bots de seguridad que escanean cada versión publicada, no por uso real. En vez de eso, esto es un caso medido en un proyecto real:
 
 <p align="center">
+  <img src="./assets/tokens-ahorrados.svg" width="700" alt="Gráfica: 30,033 tokens sin YouMindAG contra 9,137 tokens con YouMindAG, una reducción del 70%, en el caso real Parrilla Norteña Soft" />
+</p>
+
+<p align="center">
 
 | Proyecto | Archivos | Líneas | Tokens antes | Tokens después | Ahorro |
 |---|---|---|---|---|---|
