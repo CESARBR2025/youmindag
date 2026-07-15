@@ -22,6 +22,7 @@ import { cmdStatus, cmdUninstall, checkStaleBoveda, cmdReferences, cmdContext, s
 import { cmdDb } from '../lib/commands/db.mjs'
 import { cmdTrace } from '../lib/commands/trace.mjs'
 import { cmdDev } from '../lib/commands/dev.mjs'
+import { isDevScriptWrapped } from '../lib/commands/dev.mjs'
 import { cmdWatch } from '../lib/commands/watch.mjs'
 import { cmdSync } from '../lib/commands/sync.mjs'
 
@@ -353,10 +354,10 @@ async function main() {
     return cmdTrace(CWD, args.slice(1))
   }
   if (subcommand === 'status') {
-    return cmdStatus(CWD)
+    return cmdStatus(CWD, VERSION)
   }
   if (subcommand === 'uninstall') {
-    return cmdUninstall(CWD)
+    return cmdUninstall(CWD, VERSION)
   }
   if (subcommand === 'watch') {
     return cmdWatch(CWD, args.slice(1))
@@ -365,7 +366,7 @@ async function main() {
     return cmdSync(CWD, args.slice(1))
   }
   if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-    return showHelp()
+    return showHelp(VERSION)
   }
   if (subcommand && (subcommand.startsWith('-') || subcommand.startsWith('--'))) {
     console.error(`${YELLOW}Opción no reconocida: ${subcommand}${RESET}`)
