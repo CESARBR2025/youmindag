@@ -3,20 +3,54 @@
   <img src="https://img.shields.io/npm/l/youmindag" alt="license" />
   <img src="https://img.shields.io/github/stars/CESARBR2025/youmindag?style=flat" alt="GitHub stars" />
   <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node version" />
+  <img src="https://img.shields.io/badge/opencode-native%20plugin-purple" alt="opencode native plugin" />
 </p>
 
-# 🧠 YouMindAG
+<h1 align="center">🧠 YouMindAG</h1>
 
-> **Tu agente entiende tu proyecto.** Una línea y tu AI coding tool tiene contexto completo de arquitectura, dependencias y reglas.
+<p align="center">
+  <strong>Tu agente entiende tu proyecto desde el primer mensaje.</strong><br>
+  Una línea inyecta arquitectura, dependencias, reglas y esquema de BD a Claude Code, Cursor, opencode y Copilot.
+</p>
 
-```bash
-cd mi-proyecto
-npx youmindag
-```
+<p align="center">
+  <code>npx youmindag</code>
+</p>
+
+<p align="center">
+  <a href="#-instalación">Instalación</a> ·
+  <a href="#-el-caso-real">El caso real</a> ·
+  <a href="#-cómo-funciona">Cómo funciona</a> ·
+  <a href="#-compatibilidad">Compatibilidad</a> ·
+  <a href="#-la-historia-de-los-46-bugs">La historia</a>
+</p>
+
+<!--
+  TODO: reemplazar este bloque por el asciinema/vhs real una vez grabado.
+  Formato asciinema: [![asciicast](https://asciinema.org/a/XXXXX.svg)](https://asciinema.org/a/XXXXX)
+  Formato vhs (gif): <p align="center"><img src="./assets/demo.gif" width="700" alt="npx youmindag corriendo en terminal" /></p>
+-->
+<p align="center">
+  <em>🎥 Demo en terminal — próximamente</em>
+</p>
 
 ---
 
-## 📊 El problema
+## 📊 El caso real
+
+No usamos las cifras de npm ("+2,000 instalaciones") porque probablemente están infladas por bots de seguridad que escanean cada versión publicada, no por uso real. En vez de eso, esto es un caso medido en un proyecto real:
+
+<p align="center">
+
+| Proyecto | Archivos | Líneas | Tokens antes | Tokens después | Ahorro |
+|---|---|---|---|---|---|
+| Parrilla Norteña Soft | 149 | 26,000 | 30,033 | 9,137 | **~70%** |
+
+</p>
+
+Esa diferencia es lo que el agente ya no tiene que "descubrir a mano" leyendo archivo por archivo antes de poder trabajar en una tarea.
+
+## 🎯 El problema
 
 Cuando trabajas con AI coding tools (opencode, Claude Code, Cursor, etc.) en proyectos reales, el agente:
 
@@ -24,8 +58,6 @@ Cuando trabajas con AI coding tools (opencode, Claude Code, Cursor, etc.) en pro
 - ❌ **Gasta tokens** buscando archivos que debería conocer
 - ❌ **No conoce** las reglas de arquitectura
 - ❌ **Ignora** dependencias entre módulos
-
-**Resultado:** ~8,000-10,000 tokens perdidos por tarea solo en descubrimiento.
 
 ## ✅ La solución
 
@@ -37,50 +69,23 @@ YouMindAG inyecta un **sistema de contexto completo** en tu proyecto en 30 segun
 | `.opencode/` | Plugin que auto-carga contexto según la tarea |
 | `scripts/` | Analizador de tareas, extractor de BD |
 | `AGENTS.md` | Reglas + prohibiciones + checklist |
-| Graphify | Grafo de 3,000+ nodos de dependencias |
+| Graphify | Grafo de dependencias del proyecto |
 
 ## 🚀 Instalación
 
 ```bash
-# 1. Ir a tu proyecto
 cd /ruta/a/mi-proyecto
-
-# 2. Ejecutar YouMindAG
 npx youmindag
-
-# 3. Listo. Abre un chat y escribe cualquier tarea.
 ```
 
-### Lo que NO modifica
+Listo. Abre un chat con tu AI coding tool y escribe cualquier tarea.
+
+**Lo que NO modifica:**
 
 - ❌ No toca tu código fuente
 - ❌ No modifica archivos existentes (solo agrega nuevos)
 - ❌ No instala dependencias adicionales (excepto `@sentropic/graphify`)
 - ❌ No rompe el build
-
-## 🔧 Comandos CLI
-
-Una vez instalado, `youmindag` ofrece estos subcomandos:
-
-| Comando | Propósito |
-|---------|-----------|
-| `youmindag` | Instalar o actualizar el proyecto |
-| `youmindag db "SELECT ..."` | Ejecutar query SQL contra la BD (tabla ASCII) |
-| `youmindag db` | Modo interactivo REPL de BD |
-| `youmindag dev --status` | Ver estado del servidor de desarrollo |
-| `youmindag dev --restart` | Reiniciar el servidor de desarrollo |
-| `youmindag dev --logs` | Ver logs del servidor de desarrollo |
-| `youmindag dev --wrap` | Envolver dev script para capturar logs automáticos |
-| `youmindag dev --unwrap` | Restaurar dev script original |
-| `youmindag trace --client "Comp"` | Rastrear hooks (useEffect/useState) en componente cliente |
-| `youmindag trace --components "A,B"` | Inyectar lifecycle tracker en componentes React |
-| `youmindag trace --server "fn1,fn2"` | Inyectar tracer en funciones server-side |
-| `youmindag trace --undo` | Restaurar todos los archivos originales |
-| `youmindag trace --force` | Ignorar advertencia de cambios sin commit |
-| `youmindag references <simbolo>` | Buscar referencias de un símbolo en el código |
-| `youmindag context --load <modulo>` | Cargar contexto de un módulo |
-| `youmindag status` | Verificar estado de la bóveda |
-| `youmindag help` | Mostrar esta ayuda |
 
 ## 🔄 Cómo funciona
 
@@ -98,7 +103,17 @@ Implementa siguiendo las reglas de arquitectura
 npx tsc --noEmit + npm run build + npx graphify update
 ```
 
-## 🏛️ Estructura inyectada
+## 🤖 Compatibilidad
+
+| Herramienta | Soporte |
+|-------------|---------|
+| opencode | ✅ Plugin nativo |
+| Claude Code | ✅ Lee AGENTS.md + bóveda |
+| Cursor | ✅ Vía rules |
+| GitHub Copilot | ✅ Vía AGENTS.md |
+
+<details>
+<summary><strong>🏛️ Ver la estructura completa que se inyecta</strong></summary>
 
 ```
 mi-proyecto/
@@ -130,9 +145,45 @@ mi-proyecto/
 └── .graphify/                  ← Grafo de conocimiento
 ```
 
-## 🏆 Calidad de la bóveda
+</details>
 
-La bóveda se puebla en **dos capas** que garantizan calidad 10/10:
+<details>
+<summary><strong>🔧 Ver todos los comandos CLI</strong></summary>
+
+| Comando | Propósito |
+|---------|-----------|
+| `youmindag` | Instalar o actualizar el proyecto |
+| `youmindag db "SELECT ..."` | Ejecutar query SQL contra la BD (tabla ASCII) |
+| `youmindag db` | Modo interactivo REPL de BD |
+| `youmindag dev --status` | Ver estado del servidor de desarrollo |
+| `youmindag dev --restart` | Reiniciar el servidor de desarrollo |
+| `youmindag dev --logs` | Ver logs del servidor de desarrollo |
+| `youmindag dev --wrap` | Envolver dev script para capturar logs automáticos |
+| `youmindag dev --unwrap` | Restaurar dev script original |
+| `youmindag trace --client "Comp"` | Rastrear hooks (useEffect/useState) en componente cliente |
+| `youmindag trace --components "A,B"` | Inyectar lifecycle tracker en componentes React |
+| `youmindag trace --server "fn1,fn2"` | Inyectar tracer en funciones server-side |
+| `youmindag trace --undo` | Restaurar todos los archivos originales |
+| `youmindag trace --force` | Ignorar advertencia de cambios sin commit |
+| `youmindag references <simbolo>` | Buscar referencias de un símbolo en el código |
+| `youmindag context --load <modulo>` | Cargar contexto de un módulo |
+| `youmindag status` | Verificar estado de la bóveda |
+| `youmindag help` | Mostrar esta ayuda |
+
+**Post-instalación:**
+
+| Comando | Propósito |
+|---------|-----------|
+| `npx graphify query "pregunta"` | Consultar el grafo de dependencias |
+| `npx graphify update` | Reconstruir el grafo después de cambios |
+| `npm run db:schema` | Actualizar esquema BD desde information_schema |
+| `node scripts/populate-vault.mjs` | Repoblar la bóveda manualmente |
+| `skill context-loader` | Cargar instrucciones detalladas de contexto |
+
+</details>
+
+<details>
+<summary><strong>🏆 Ver cómo se garantiza la calidad de la bóveda (dos capas)</strong></summary>
 
 ### Capa 1 — Poblado factual durante install (10/10 siempre)
 
@@ -151,34 +202,18 @@ Al ejecutar `npx youmindag`, se detectan datos duros del proyecto:
 
 ### Capa 2 — Poblado por AI al primer chat (10/10 con modelos recomendados)
 
-Cuando abres un chat, el agente lee `AGENTS.md` y completa automáticamente:
-
-| Sección | Lo que hace el agente |
-|---------|----------------------|
-| `🏗 Arquitectura/Decisiones.md` | Crea ADRs basados en stack detectado |
-| `🏗 Arquitectura/Middleware y Auth.md` | Analiza flujo de autenticación |
-| `🧩 Features/Index.md` | Describe cada módulo |
-| `🧩 Features/[nombre].md` | Crea docs individuales |
-| `🛠 Stack/Convenciones.md` | Infiere patrones del código |
-| `📦 Datos/Esquema BD.md` | Ejecuta `npm run db:schema` |
-| `📡 API/API Routes.md` | Describe cada endpoint |
-| `📡 API/Server Actions.md` | Describe cada acción |
-| `🗺 Roadmap/Changelog.md` | Genera desde `git log` |
-| `🗺 Roadmap/Pendientes.md` | Escanea TODO/FIXME |
-| `🗺 Roadmap/Troubleshooting.md` | Documenta errores conocidos |
-| `📚 Referencias/Glosario.md` | Extrae vocabulario del dominio |
+Cuando abres un chat, el agente lee `AGENTS.md` y completa automáticamente: ADRs de arquitectura, análisis de auth, docs por módulo, convenciones inferidas del código, esquema de BD, docs de endpoints/acciones, changelog desde `git log`, TODOs pendientes, troubleshooting y glosario del dominio.
 
 ### Re-poblado manual
-
-En cualquier momento:
 
 ```bash
 node scripts/populate-vault.mjs
 ```
 
-## 🤖 Modelos recomendados
+</details>
 
-YouMindAG está optimizado para los siguientes modelos AI. La calidad del poblado de la Capa 2 depende del modelo usado:
+<details>
+<summary><strong>🤖 Ver modelos recomendados</strong></summary>
 
 | Modelo | Calidad | Notas |
 |--------|---------|-------|
@@ -188,26 +223,26 @@ YouMindAG está optimizado para los siguientes modelos AI. La calidad del poblad
 | **Gemini 2.5 Pro** | ⭐ 9/10 | Muy bueno para extracción de vocabulario |
 | Otros (Llama 4, Mistral, etc.) | ⭐ 7-8/10 | Funcional, menos preciso |
 
-> **Nota:** La Capa 1 (poblado factual) es 10/10 con cualquier modelo o incluso sin AI.
+> La Capa 1 (poblado factual) es 10/10 con cualquier modelo o incluso sin AI.
 
-## 🛠️ Comandos útiles post-instalación
+</details>
 
-| Comando | Propósito |
-|---------|-----------|
-| `npx graphify query "pregunta"` | Consultar el grafo de dependencias |
-| `npx graphify update` | Reconstruir el grafo después de cambios |
-| `npm run db:schema` | Actualizar esquema BD desde information_schema |
-| `node scripts/populate-vault.mjs` | Repoblar la bóveda manualmente |
-| `skill context-loader` | Cargar instrucciones detalladas de contexto |
+## 📖 La historia de los 46 bugs
 
-## 🤖 Compatibilidad
+v2.9.0 modularizó los comandos (`db`, `dev`, `trace`, `watch`, `sync`) y dejó 46 imports faltantes repartidos en 7 archivos, invisibles hasta que ESLint los encontró. Corregirlos llevó a instalar un gate de publicación que hace estructuralmente imposible repetir ese error sin saltárselo a propósito.
 
-| Herramienta | Soporte |
-|-------------|---------|
-| Opencode | ✅ Plugin native |
-| Claude Code | ✅ Lee AGENTS.md + bóveda |
-| Cursor | ✅ Vía rules |
-| GitHub Copilot | ✅ Vía AGENTS.md |
+<!-- TODO: enlazar aquí el artículo largo (dev.to / blog) cuando esté publicado -->
+📄 *Artículo completo: próximamente*
+
+## 🛠️ Estado técnico
+
+**v2.9.3** — estable, con `prepublishOnly` corriendo lint + test antes de cada publish.
+
+Pendiente conocido (alcance futuro, no bugs): auto-poblado limitado a proyectos Node/`package.json`, sin fallback si falla la instalación de Graphify, sin tests de casos límite extremos.
+
+## 🤝 Contribuir
+
+Es open source y las contribuciones son bienvenidas. Antes de abrir un PR, lee la [guía de contribución](./CONTRIBUTING.md) — explica la estructura del proyecto, cómo agregar un comando nuevo, y el gate de verificación obligatorio (`npm run verify`).
 
 ## 📝 Licencia
 
