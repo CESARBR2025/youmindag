@@ -1,6 +1,6 @@
 {
   "name": "youmindag",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "🧠 Inyecta inteligencia de contexto a cualquier proyecto. Una línea y tu AI coding tool entiende toda la arquitectura.",
   "bin": {
     "youmindag": "bin/run.mjs"
@@ -28,11 +28,15 @@
   },
   "files": [
     "bin/",
+    "lib/",
     "template/",
     "package.json",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": ">=18"
   }

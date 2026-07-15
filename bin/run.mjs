@@ -10,6 +10,13 @@ import { execSync } from 'child_process'
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
 
+import { RESET, CYAN, GREEN, YELLOW, BOLD, pascalCase, kebabCase } from '../lib/utils.mjs'
+import { detectLang, hasPostgres, detectDBEngine, getDBMigrationCommands } from '../lib/detect.mjs'
+import { getBovedaDir, readYoumindagVersion, writeBovedaSection, AUTO_START, AUTO_END, YOUMINDAG_JSON } from '../lib/vault.mjs'
+import { ensureGitignoreEntries, cleanGitignoreEntries } from '../lib/gitignore.mjs'
+import { upgradeAgentsMd, mergeContextMap } from '../lib/agents.mjs'
+
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const TEMPLATE = join(ROOT, 'template')
@@ -18,13 +25,6 @@ const CWD = process.cwd()
 const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
 const VERSION = PKG.version
 
-const YOUMINDAG_JSON = '.youmindag.json'
-
-const RESET = '\x1b[0m'
-const CYAN = '\x1b[36m'
-const GREEN = '\x1b[32m'
-const YELLOW = '\x1b[33m'
-const BOLD = '\x1b[1m'
 
 function log(msg) { console.log(msg) }
 
@@ -66,141 +66,6 @@ function copyDir(src, dst, overwrite = false) {
   }
 }
 
-function fileLines(p) {
-  try { return readFileSync(p, 'utf-8').split('\n').length } catch { return 0 }
-}
-
-function detectLang() {
-  const indicators = [
-    { file: 'package.json', lang: 'TypeScript / JavaScript', framework: 'Node.js' },
-    { file: 'tsconfig.json', lang: 'TypeScript', framework: 'Node.js / Next.js' },
-    { file: 'go.mod', lang: 'Go', framework: 'Go' },
-    { file: 'Cargo.toml', lang: 'Rust', framework: 'Rust' },
-    { file: 'pyproject.toml', lang: 'Python', framework: 'Python' },
-    { file: 'requirements.txt', lang: 'Python', framework: 'Python' },
-    { file: 'Gemfile', lang: 'Ruby', framework: 'Ruby' },
-    { file: 'composer.json', lang: 'PHP', framework: 'PHP' },
-    { file: '.csproj', lang: 'C#', framework: '.NET' },
-  ]
-  for (const ind of indicators) {
-    if (existsSync(join(CWD, ind.file))) return ind
-    if (ind.file === '.csproj') {
-      const files = readdirSync(CWD).filter(f => f.endsWith('.csproj'))
-      if (files.length > 0) return ind
-    }
-  }
-  return { lang: 'Unknown', framework: 'Unknown' }
-}
-
-function hasPostgres() {
-  try {
-    const pkg = JSON.parse(readFileSync(join(CWD, 'package.json'), 'utf-8'))
-    return !!(pkg.dependencies?.pg || pkg.devDependencies?.pg || pkg.dependencies?.['@neondatabase/serverless'])
-  } catch { return false }
-}
-
-function detectDBEngine(cwd) {
-  const pkgPath = join(cwd, 'package.json')
-  if (!existsSync(pkgPath)) return null
-  try {
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies }
-    if (deps['@supabase/supabase-js']) return 'supabase'
-    if (deps.pg || deps['@neondatabase/serverless']) return 'postgres'
-    if (deps.mysql2 || deps.mysql) return 'mysql'
-    if (deps['better-sqlite3'] || deps.sqlite3) return 'sqlite'
-    if (deps.mongodb || deps.mongoose) return 'mongodb'
-    if (deps['@prisma/client']) return 'prisma'
-    if (deps['drizzle-orm']) return 'drizzle'
-  } catch {}
-  return null
-}
-
-function getDBMigrationCommands(engine) {
-  const commands = {
-    supabase: { cmd: 'npx supabase db push', desc: 'Sincroniza schema local → remoto' },
-    postgres: { cmd: 'psql $DATABASE_URL -f migrations/...', desc: 'Ejecuta archivo SQL contra PostgreSQL' },
-    mysql: { cmd: 'mysql -h $DB_HOST -u $DB_USER -p $DB_NAME < migrations/...', desc: 'Ejecuta archivo SQL contra MySQL' },
-    sqlite: { cmd: 'sqlite3 $DB_PATH < migrations/...', desc: 'Ejecuta archivo SQL contra SQLite' },
-    mongodb: { cmd: 'mongosh $MONGO_URI --eval "load(...)"', desc: 'Ejecuta script contra MongoDB' },
-    prisma: { cmd: 'npx prisma migrate dev', desc: 'Aplica migraciones de Prisma' },
-    drizzle: { cmd: 'npx drizzle-kit push', desc: 'Sincroniza schema de Drizzle' },
-  }
-  const extra = {
-    supabase: '| `npx supabase db diff` | Genera migración SQL del estado actual |',
-    prisma: '| `npx prisma db push` | Sincroniza schema sin generar migración |',
-    drizzle: '| `npx drizzle-kit generate` | Genera archivos de migración SQL |',
-  }
-  const main = commands[engine]
-  if (!main) return ''
-  let section = '\n## Migraciones DB\n\n'
-  section += `Motor detectado: **${engine}**\n\n`
-  section += `| Comando | Propósito |\n|---------|----------|\n`
-  section += `| \`${main.cmd}\` | ${main.desc} |\n`
-  if (extra[engine]) section += `${extra[engine]}\n`
-  section += '\nPara DDL manual: usar SQL Editor en el dashboard de tu proveedor de BD.\n'
-  return section
-}
-
-function pascalCase(str) {
-  return str
-    .replace(/[-_]/g, ' ')
-    .replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .replace(/\s+/g, '')
-}
-
-function kebabCase(str) {
-  return str
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function getBovedaDir(cwd) {
-  // Try .youmindag.json first
-  const p = join(cwd, YOUMINDAG_JSON)
-  if (existsSync(p)) {
-    try {
-      const data = JSON.parse(readFileSync(p, 'utf-8'))
-      if (data.bovedaDir && existsSync(join(cwd, data.bovedaDir))) return data.bovedaDir
-    } catch {}
-  }
-  // Look for boveda-* directories
-  try {
-    const entries = readdirSync(cwd)
-    const match = entries.find(e => e.startsWith('boveda-') && statSync(join(cwd, e)).isDirectory())
-    if (match) return match
-  } catch {}
-  // Legacy fallback
-  if (existsSync(join(cwd, 'boveda'))) return 'boveda'
-  return null
-}
-
-// ─── AUTO-GENERATED block helpers ──────────────────────────────
-
-const AUTO_START = '<!-- AUTO-GENERATED START -->'
-const AUTO_END = '<!-- AUTO-GENERATED END -->'
-
-function writeBovedaSection(filePath, newContent) {
-  const wrapped = AUTO_START + '\n' + newContent.trim() + '\n' + AUTO_END + '\n'
-  if (!existsSync(filePath)) {
-    mkdirSync(dirname(filePath), { recursive: true })
-    writeFileSync(filePath, wrapped)
-    return
-  }
-  const existing = readFileSync(filePath, 'utf-8')
-  const startIdx = existing.indexOf(AUTO_START)
-  const endIdx = existing.indexOf(AUTO_END)
-  if (startIdx !== -1 && endIdx !== -1) {
-    const before = existing.slice(0, startIdx)
-    const after = existing.slice(endIdx + AUTO_END.length)
-    writeFileSync(filePath, before + wrapped + after)
-  } else {
-    writeFileSync(filePath, wrapped)
-  }
-}
 
 let DRY_RUN = false
 
@@ -589,14 +454,6 @@ function populateVaultFiles(cwd) {
 
 // ─── Delta upgrade ────────────────────────────────────────────────
 
-function readYoumindagVersion(cwd) {
-  const p = join(cwd, YOUMINDAG_JSON)
-  if (!existsSync(p)) return null
-  try {
-    const data = JSON.parse(readFileSync(p, 'utf-8'))
-    return data.version || null
-  } catch { return null }
-}
 
 function getGraphifyVersion(cwd) {
   const data = readYoumindagData(cwd)
@@ -615,77 +472,6 @@ function writeYoumindagVersion(cwd, graphifyVersion, bovedaDir) {
   maybeWriteFile(join(cwd, YOUMINDAG_JSON), JSON.stringify(data, null, 2) + '\n')
 }
 
-function upgradeAgentsMd(cwd) {
-  const agentsPath = join(cwd, 'AGENTS.md')
-  const templatePath = join(TEMPLATE, 'AGENTS.md')
-
-  if (!existsSync(agentsPath)) {
-    maybeCopyFile(templatePath, agentsPath)
-    return 'creado (no existía)'
-  }
-
-  if (!existsSync(templatePath)) return 'omitido (template no encontrado)'
-
-  const current = readFileSync(agentsPath, 'utf-8')
-  const template = readFileSync(templatePath, 'utf-8')
-
-  const beginMarker = '<!-- BEGIN:youmindag -->'
-  const endMarker = '<!-- END:youmindag -->'
-
-  const tBegin = template.indexOf(beginMarker)
-  const tEnd = template.indexOf(endMarker)
-  if (tBegin === -1 || tEnd === -1) return 'omitido (template sin markers)'
-
-  const newContent = template.slice(tBegin + beginMarker.length, tEnd)
-
-  // Backup
-  const backupPath = join(cwd, 'AGENTS.md.bak')
-  maybeCopyFile(agentsPath, backupPath)
-
-  const cBegin = current.indexOf(beginMarker)
-  const cEnd = current.indexOf(endMarker)
-
-  if (cBegin !== -1 && cEnd !== -1) {
-    const updated = current.slice(0, cBegin + beginMarker.length) + newContent + current.slice(cEnd)
-    maybeWriteFile(agentsPath, updated)
-    return 'actualizado (merge)'
-  }
-
-  const before = cBegin !== -1 ? current.slice(0, cBegin + beginMarker.length) : ''
-  const after = cEnd !== -1 ? current.slice(cEnd) : ''
-
-  if (!before && !after) {
-    maybeWriteFile(agentsPath, template)
-    return 'actualizado (reemplazo total)'
-  }
-
-  maybeWriteFile(agentsPath, before + beginMarker + newContent + endMarker + after)
-  return 'actualizado (merge + markers nuevos)'
-}
-
-function mergeContextMap(cwd) {
-  const currentPath = join(cwd, '.opencode', 'context-map.yaml')
-  const templatePath = join(TEMPLATE, '.opencode', 'context-map.yaml')
-
-  if (!existsSync(currentPath)) {
-    maybeCopyFile(templatePath, currentPath)
-    return 'creado (no existía)'
-  }
-  if (!existsSync(templatePath)) return 'omitido (template no encontrado)'
-
-  const current = readFileSync(currentPath, 'utf-8')
-  const template = readFileSync(templatePath, 'utf-8')
-
-  const templateLines = template.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'))
-  const currentHasContent = current.split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).length > 2
-
-  if (!currentHasContent) {
-    maybeWriteFile(currentPath, template)
-    return 'actualizado (vacío → template)'
-  }
-
-  return 'sin cambios (preservado)'
-}
 
 function upgradeScriptsOpencode(cwd) {
   const changes = []
@@ -789,22 +575,7 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   // Inject scripts/
   console.log(`${BOLD}📜 Instalando scripts de utilidad...${RESET}`)
   maybeCopyDir(join(TEMPLATE, 'scripts'), join(cwd, 'scripts'))
-  const gitignorePath = join(cwd, '.gitignore')
-  if (existsSync(gitignorePath)) {
-    let gitignore = readFileSync(gitignorePath, 'utf-8')
-    const hasOldEntries = gitignore.includes('graphify-visual') || gitignore.includes('.graphify/branch.json')
-    if (hasOldEntries) {
-      // Replace old scattered entries with clean single-line ignore
-      const lines = gitignore.split('\n').filter(l =>
-        !l.includes('.graphify/') && !l.includes('graphify-visual') && !l.includes('# YouMindAG — generated')
-      )
-      gitignore = lines.join('\n') + '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
-      maybeWriteFile(gitignorePath, gitignore)
-    } else if (!gitignore.includes('.graphify/')) {
-      gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
-      maybeWriteFile(gitignorePath, gitignore)
-    }
-  }
+  if (!DRY_RUN) ensureGitignoreEntries(cwd)
   console.log(`  ${GREEN}✅ scripts/ instalados (load-context, extract-domain, export-schema)${RESET}\n`)
 
   // Backup + update AGENTS.md
@@ -914,7 +685,7 @@ async function upgrade(oldVersion, cwd, projectName) {
   const bovedaDirName = existingBoveda || `boveda-${kebabCase(projectName)}`
 
   // 1. AGENTS.md — merge via markers
-  const agentsResult = upgradeAgentsMd(cwd)
+  const agentsResult = DRY_RUN ? 'simulado (dry-run)' : upgradeAgentsMd(cwd, TEMPLATE)
   changes.push(`📄 AGENTS.md — ${agentsResult}`)
 
   // 2. Bóveda — skip (user territory)
@@ -942,26 +713,13 @@ async function upgrade(oldVersion, cwd, projectName) {
 
   // 4. context-map.yaml — merge (preserve user entries)
   if (!DRY_RUN) mkdirSync(join(cwd, '.opencode'), { recursive: true })
-  const ctxResult = mergeContextMap(cwd)
+  const ctxResult = DRY_RUN ? 'simulado (dry-run)' : mergeContextMap(cwd, TEMPLATE)
   changes.push(`🔗 .opencode/context-map.yaml — ${ctxResult}`)
 
   // 5. .gitignore — ensure entries
-  const gitignorePath = join(cwd, '.gitignore')
-  if (existsSync(gitignorePath)) {
-    let gitignore = readFileSync(gitignorePath, 'utf-8')
-    const hasOldEntries = gitignore.includes('graphify-visual') || gitignore.includes('.graphify/branch.json')
-    if (hasOldEntries) {
-      const lines = gitignore.split('\n').filter(l =>
-        !l.includes('.graphify/') && !l.includes('graphify-visual') && !l.includes('# YouMindAG — generated')
-      )
-      gitignore = lines.join('\n') + '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
-      maybeWriteFile(gitignorePath, gitignore)
-      if (!DRY_RUN) changes.push('📂 .gitignore — entradas actualizadas')
-    } else if (!gitignore.includes('.graphify/')) {
-      gitignore += '\n# YouMindAG — generated knowledge graph\n.graphify/\ngraphify-visual/\n'
-      maybeWriteFile(gitignorePath, gitignore)
-      if (!DRY_RUN) changes.push('📂 .gitignore — entradas agregadas')
-    }
+  if (!DRY_RUN) {
+    ensureGitignoreEntries(cwd)
+    changes.push('📂 .gitignore — entradas actualizadas')
   }
 
   // 6. Write version
@@ -1053,7 +811,7 @@ async function cmdDb(cwd, query) {
     process.exit(1)
   }
 
-  if (!hasPostgres()) {
+  if (!hasPostgres(CWD)) {
     console.error(`${YELLOW}Error: pg no encontrado en package.json${RESET}`)
     console.error(`${YELLOW}   Instálalo con: npm install pg${RESET}`)
     process.exit(1)
@@ -1259,15 +1017,7 @@ function cmdUninstall(cwd) {
       } catch {}
     }
 
-    const gitignorePath = join(cwd, '.gitignore')
-    if (existsSync(gitignorePath)) {
-      try {
-        let gitignore = readFileSync(gitignorePath, 'utf-8')
-        const lines = gitignore.split('\n').filter(l => !l.includes('graphify-visual') && !l.includes('.graphify/') && !l.includes('# YouMindAG'))
-        writeFileSync(gitignorePath, lines.join('\n').replace(/\n{3,}/g, '\n\n'))
-        console.log(`  ${GREEN}✅ Entradas de .gitignore limpiadas${RESET}`)
-      } catch {}
-    }
+    try { cleanGitignoreEntries(cwd); console.log(`  ${GREEN}✅ Entradas de .gitignore limpiadas${RESET}`) } catch {}
 
     console.log(`\n  ${GREEN}${BOLD}✅ YouMindAG desinstalado.${RESET}`)
     console.log(`  ${CYAN}   Para eliminar node_modules/@sentropic/graphify: npm uninstall @sentropic/graphify${RESET}\n`)
@@ -1904,17 +1654,20 @@ async function main() {
     await upgrade(oldVersion, CWD, projectName)
   } else {
     // Fresh install
-    const info = detectLang()
+    const info = detectLang(CWD)
     const pkg = existsSync(join(CWD, 'package.json'))
     const hasGit = existsSync(join(CWD, '.git'))
     const hasBoveda = !!getBovedaDir(CWD)
-    const hasDB = hasPostgres()
+    const hasDB = hasPostgres(CWD)
     const wantSchema = hasDB
     await freshInstall(CWD, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema)
   }
 }
 
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
 main().catch(e => {
   console.error(`\n${YELLOW}Error: ${e.message}${RESET}\n`)
   process.exit(1)
 })
+}
+
