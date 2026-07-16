@@ -18,13 +18,17 @@ import { upgradeAgentsMd, mergeContextMap } from '../lib/agents.mjs'
 import { ensureGitignoreEntries, cleanGitignoreEntries } from '../lib/gitignore.mjs'
 import { populateVaultFiles } from '../lib/populate.mjs'
 import { getGraphifyVersion, installGraphify } from '../lib/graphify.mjs'
-import { cmdStatus, cmdUninstall, checkStaleBoveda, cmdReferences, cmdContext, showHelp } from '../lib/commands/misc.mjs'
+import { cmdStatus, cmdUninstall, checkStaleBoveda, cmdReferences, cmdContext, cmdHelp } from '../lib/commands/misc.mjs'
 import { cmdDb } from '../lib/commands/db.mjs'
 import { cmdTrace } from '../lib/commands/trace.mjs'
 import { cmdDev } from '../lib/commands/dev.mjs'
 import { isDevScriptWrapped } from '../lib/commands/dev.mjs'
 import { cmdWatch } from '../lib/commands/watch.mjs'
 import { cmdSync } from '../lib/commands/sync.mjs'
+import { cmdHistory } from '../lib/commands/history.mjs'
+import { cmdArchitect } from '../lib/commands/architect.mjs'
+import { cmdDoctor } from '../lib/commands/doctor.mjs'
+import { cmdGuide } from '../lib/commands/guide.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
@@ -253,8 +257,20 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   if (!isDevScriptWrapped(cwd)) {
     console.log(`  ${YELLOW}💡 Recomendación: youmindag dev --wrap para capturar logs del dev server automáticamente${RESET}`)
   }
-  console.log(`\n  ${CYAN}Próximo paso: abrir un chat y escribir cualquier tarea.${RESET}`)
-  console.log(`  ${CYAN}El agente cargará el contexto automáticamente.${RESET}\n`)
+  console.log(`\n${CYAN}${BOLD}  💡 PRÓXIMOS PASOS RECOMENDADOS${RESET}`)
+  console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
+  console.log(`  1️⃣  Explorar la bóveda:`)
+  console.log(`      open "${bovedaDirName}/Home.md"`)
+  console.log()
+  console.log(`  2️⃣  Ver el grafo visualmente:`)
+  console.log(`      open "graphify-visual/studio.html"`)
+  console.log()
+  console.log(`  3️⃣  En tu próximo chat, carga contexto de un módulo:`)
+  console.log(`      youmindag architect <nombre-modulo>`)
+  console.log()
+  console.log(`  4️⃣  Ver estado del proyecto:`)
+  console.log(`      youmindag doctor`)
+  console.log()
 }
 
 
@@ -366,7 +382,19 @@ async function main() {
     return cmdSync(CWD, args.slice(1))
   }
   if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-    return showHelp(VERSION)
+    return cmdHelp(CWD, args.slice(1))
+  }
+  if (subcommand === 'history') {
+    return cmdHistory(CWD, args.slice(1))
+  }
+  if (subcommand === 'architect') {
+    return cmdArchitect(CWD, args.slice(1))
+  }
+  if (subcommand === 'doctor') {
+    return cmdDoctor(CWD, args.slice(1))
+  }
+  if (subcommand === 'guide') {
+    return cmdGuide(CWD, args.slice(1))
   }
   if (subcommand && (subcommand.startsWith('-') || subcommand.startsWith('--'))) {
     console.error(`${YELLOW}Opción no reconocida: ${subcommand}${RESET}`)
