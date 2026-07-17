@@ -129,10 +129,13 @@ function handleDocNudge(cwd, input, toolName, state) {
     if (now - last < DOC_NUDGE_COOLDOWN_MS) return
     state.ymDocNudge[feature] = now
 
+    // Claude Code pasa file_path absoluto; mostrar la ruta relativa es más legible.
+    const displayPath = toRelative(cwd, editedPath)
+
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
-        additionalContext: `[YouMindAG] Editaste ${editedPath}, documentado en ${feature}.md — considera actualizar esa sección en este mismo cambio.`,
+        additionalContext: `[YouMindAG] Editaste ${displayPath}, documentado en ${feature}.md — considera actualizar esa sección en este mismo cambio.`,
       },
     }))
   } catch { /* fail-open */ }
