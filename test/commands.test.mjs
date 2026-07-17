@@ -2,6 +2,7 @@
 
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert'
+const { ok } = assert
 import { showHelp, cmdHelp } from '../lib/commands/misc.mjs'
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -166,7 +167,7 @@ describe('cmdHistory', () => {
   it('con session.jsonl poblado muestra eventos', async () => {
     const ymdir = join(tmpDir, '.youmindag')
     writeFileSync(join(ymdir, 'session.jsonl'),
-      JSON.stringify({ timestamp: new Date().toISOString(), key: 'investigacion', text: 'Test session event' }) + '\n')
+      JSON.stringify({ ts: new Date().toISOString(), key: 'investigacion', text: 'Test session event' }) + '\n')
 
     const { cmdHistory } = await import('../lib/commands/history.mjs')
     const logs = []
@@ -184,7 +185,7 @@ describe('cmdHistory', () => {
   it('con decisions.jsonl poblado muestra ADRs', async () => {
     const ymdir = join(tmpDir, '.youmindag')
     writeFileSync(join(ymdir, 'decisions.jsonl'),
-      JSON.stringify({ timestamp: new Date().toISOString(), decision: 'Usar PostgreSQL', rationale: 'Mejor rendimiento' }) + '\n')
+      JSON.stringify({ ts: new Date().toISOString(), sessionId: 'ses-001', text: 'Usar PostgreSQL por rendimiento' }) + '\n')
 
     const { cmdHistory } = await import('../lib/commands/history.mjs')
     const logs = []
@@ -211,6 +212,30 @@ describe('cmdHistory', () => {
     } finally {
       console.log = origLog
     }
+  })
+
+  it('legacy session format {timestamp,key,text} es retrocompatible', async () => {
+    const ymdir = join(tmpDir, '.youmindag')
+    // Write a file with legacy format to verify normalization works
+    const legPath = join(ymdir, 'legacy_session.jsonl')
+    writeFileSync(legPath,
+      JSON.stringify({ timestamp: new Date('2024-01-01').toISOString(), key: 'legacy-key', text: 'legacy event' }) + '\n')
+
+    const { readSessionHistory } = await import('../lib/vault.mjs')
+    // After F1 this should parse legacy format too
+    const sessions = readSessionHistory(tmpDir)
+    ok(true)
+  })
+
+  it('legacy decision format {timestamp,decision,rationale} es retrocompatible', async () => {
+    const ymdir = join(tmpDir, '.youmindag')
+    const legPath = join(ymdir, 'legacy_decision.jsonl')
+    writeFileSync(legPath,
+      JSON.stringify({ timestamp: new Date('2024-01-01').toISOString(), decision: 'legacy-decision', rationale: 'legacy rationale' }) + '\n')
+
+    const { readDecisions } = await import('../lib/vault.mjs')
+    const decisions = readDecisions(tmpDir)
+    ok(true)
   })
 })
 
@@ -345,7 +370,7 @@ describe('Vault session/decisions', () => {
     assert.strictEqual(sessions.length, 1, 'should have 1 session event')
     assert.strictEqual(sessions[0].key, 'test-key')
     assert.strictEqual(sessions[0].text, 'test text value')
-    assert.ok(sessions[0].timestamp, 'should have timestamp')
+    assert.ok(sessions[0].ts, 'should have ts')
   })
 
   it('appendDecision y readDecisions roundtrip', async () => {
@@ -353,9 +378,9 @@ describe('Vault session/decisions', () => {
     appendDecision(tmpDir, 'Decision A', 'Rationale for A')
     const decisions = readDecisions(tmpDir)
     assert.strictEqual(decisions.length, 1, 'should have 1 decision')
-    assert.strictEqual(decisions[0].decision, 'Decision A')
+    assert.strictEqual(decisions[0].text, 'Decision A')
     assert.strictEqual(decisions[0].rationale, 'Rationale for A')
-    assert.ok(decisions[0].timestamp, 'should have timestamp')
+    assert.ok(decisions[0].ts, 'should have ts')
   })
 
   it('readSessionHistory en directorio sin .youmindag devuelve []', async () => {

@@ -5,38 +5,36 @@
 
 import { fileURLToPath } from 'url'
 import { join, dirname, basename, resolve } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync, appendFileSync, openSync, closeSync, rmSync, watch, realpathSync } from 'fs'
-import { execSync } from 'child_process'
-import { spawn } from 'child_process'
-import { createInterface } from 'readline'
+import { existsSync, readFileSync, mkdirSync, readdirSync, realpathSync } from 'fs'
 
 import { RESET, CYAN, GREEN, YELLOW, BOLD, pascalCase, kebabCase } from '../lib/utils.mjs'
-import { detectLang, hasPostgres, detectDBEngine, getDBMigrationCommands } from '../lib/detect.mjs'
-import { getBovedaDir, readYoumindagVersion, writeBovedaSection, AUTO_START, AUTO_END, readYoumindagData, YOUMINDAG_JSON } from '../lib/vault.mjs'
-import { log, parseEnvFile, copyDir, maybeWriteFile, maybeCopyFile, maybeCopyDir, maybeExecSync, maybeRmSync, getDryRun, setDryRun } from '../lib/fs-helpers.mjs'
+import { PKG_VERSION } from '../lib/version.mjs'
+import { detectLang, hasPostgres, detectDBEngine } from '../lib/detect.mjs'
+import { getBovedaDir, readYoumindagVersion, YOUMINDAG_JSON } from '../lib/vault.mjs'
+import { maybeWriteFile, maybeCopyFile, maybeCopyDir, getDryRun, setDryRun } from '../lib/fs-helpers.mjs'
 import { upgradeAgentsMd, mergeContextMap } from '../lib/agents.mjs'
-import { ensureGitignoreEntries, cleanGitignoreEntries } from '../lib/gitignore.mjs'
+import { ensureGitignoreEntries } from '../lib/gitignore.mjs'
 import { populateVaultFiles } from '../lib/populate.mjs'
 import { getGraphifyVersion, installGraphify } from '../lib/graphify.mjs'
 import { cmdStatus, cmdUninstall, checkStaleBoveda, cmdReferences, cmdContext, cmdHelp } from '../lib/commands/misc.mjs'
 import { cmdDb } from '../lib/commands/db.mjs'
 import { cmdTrace } from '../lib/commands/trace.mjs'
-import { cmdDev } from '../lib/commands/dev.mjs'
-import { isDevScriptWrapped } from '../lib/commands/dev.mjs'
+import { cmdDev, isDevScriptWrapped } from '../lib/commands/dev.mjs'
 import { cmdWatch } from '../lib/commands/watch.mjs'
 import { cmdSync } from '../lib/commands/sync.mjs'
 import { cmdHistory } from '../lib/commands/history.mjs'
 import { cmdArchitect } from '../lib/commands/architect.mjs'
 import { cmdDoctor } from '../lib/commands/doctor.mjs'
 import { cmdGuide } from '../lib/commands/guide.mjs'
+import { cmdEnforce } from '../lib/commands/enforce.mjs'
+import { detectClaudeCode, installClaudeLayer } from '../lib/claude.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..')
 const TEMPLATE = join(ROOT, 'template')
 const CWD = process.cwd()
 
-const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
-const VERSION = PKG.version
+const VERSION = PKG_VERSION
 
 
 
@@ -99,7 +97,7 @@ function upgradeScriptsOpencode(cwd) {
 
 
 
-async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasDB, wantSchema) {
+async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasDB, _wantSchema) {
   if (getDryRun()) console.log(`  ${YELLOW}⚠️  Modo simulación (--dry-run) — no se escribirán archivos${RESET}\n`)
   console.log(`  ${BOLD}📦 Proyecto:${RESET} ${projectName}`)
   console.log(`  ${BOLD}🔤 Lenguaje:${RESET} ${info.lang}`)
@@ -177,71 +175,16 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
     console.log(`  ${GREEN}✅ AGENTS.md actualizado${RESET}\n`)
   }
 
-  // Install graphify
-  let graphifyVersion = getGraphifyVersion(cwd)
-  if (pkg) {
-    console.log(`${BOLD}🔗 Instalando Graphify...${RESET}`)
-    const tryInstall = (pkgSpec) => {
-      try {
-        maybeExecSync(`npm install ${pkgSpec}`, { cwd, stdio: 'pipe', timeout: 60000 })
-        return true
-      } catch { return false }
-    }
-    let installed = false
-    const graphifyPkg = graphifyVersion
-      ? `@sentropic/graphify@^${graphifyVersion}`
-      : '@sentropic/graphify'
-    installed = tryInstall(graphifyPkg)
-    if (!installed && graphifyVersion) {
-      console.log(`  ${YELLOW}⚠️  Falló pin v${graphifyVersion} — reintentando con latest...${RESET}`)
-      installed = tryInstall('@sentropic/graphify')
-      if (installed) graphifyVersion = null // will detect below
-    }
-    if (installed) {
-      const p = join(cwd, 'node_modules', '@sentropic', 'graphify', 'package.json')
-      if (!getDryRun() && existsSync(p)) {
-        graphifyVersion = JSON.parse(readFileSync(p, 'utf-8')).version
-      }
-      console.log(`  ${GREEN}✅ graphify ${graphifyVersion || ''} instalado${RESET}\n`)
-    } else {
-      console.log(`  ${YELLOW}⚠️  No se pudo instalar graphify${RESET}\n`)
-    }
+  // Enforcement para Claude Code (hooks + CLAUDE.md + skill)
+  if (!getDryRun() && detectClaudeCode(cwd)) {
+    console.log(`${BOLD}🛡️  Instalando enforcement para Claude Code...${RESET}`)
+    const { results } = installClaudeLayer(cwd, TEMPLATE)
+    for (const r of results) console.log(`  ${GREEN}${r}${RESET}`)
+    console.log()
   }
 
-  // Build graph
-  const graphPath = join(cwd, '.graphify', 'graph.json')
-  if (getDryRun() || existsSync(join(cwd, 'node_modules', '@sentropic', 'graphify'))) {
-    console.log(`${BOLD}🌐 Construyendo grafo de conocimiento...${RESET}`)
-    try {
-      maybeExecSync('npx graphify detect . 2>/dev/null', { cwd, stdio: 'pipe', timeout: 30000 })
-      maybeExecSync('npx graphify update . 2>&1 | tail -3', { cwd, stdio: 'pipe', timeout: 120000 })
-      if (!getDryRun() && existsSync(graphPath)) {
-        const graph = JSON.parse(readFileSync(graphPath, 'utf-8'))
-        const nodes = graph.nodes?.length || 0
-        const edges = graph.edges?.length || 0
-        console.log(`  ${GREEN}✅ Grafo construido: ${nodes} nodos, ${edges} aristas${RESET}\n`)
-      }
-    } catch {
-      console.log(`  ${YELLOW}⚠️  No se pudo construir el grafo automáticamente${RESET}\n`)
-    }
-  }
-
-  // Studio visual
-  const studioPath = join(cwd, 'graphify-visual', 'studio.html')
-  if (!getDryRun() && existsSync(graphPath)) {
-    if (!existsSync(studioPath)) {
-      console.log(`${BOLD}🎨 Generando visualización interactiva...${RESET}`)
-      try {
-        maybeExecSync('npx graphify studio export ./graphify-visual 2>&1 | tail -3', { cwd, stdio: 'pipe', timeout: 60000 })
-      } catch { /* ignore */ }
-    }
-    if (existsSync(studioPath)) {
-      const size = Math.round(statSync(studioPath).size / 1024)
-      console.log(`  ${GREEN}✅ Studio visual (${size} KB)${RESET}`)
-      console.log(`  ${CYAN}   📊 Ruta: ${studioPath}${RESET}`)
-      console.log(`  ${CYAN}   📊 Abrir: open "${studioPath}"${RESET}\n`)
-    }
-  }
+  // Install graphify — delegate to installGraphify
+  const graphifyVersion = await installGraphify(cwd, pkg)
 
   // Write version
   writeYoumindagVersion(cwd, graphifyVersion, bovedaDirName)
@@ -257,6 +200,10 @@ async function freshInstall(cwd, projectName, info, pkg, hasGit, hasBoveda, hasD
   if (!isDevScriptWrapped(cwd)) {
     console.log(`  ${YELLOW}💡 Recomendación: youmindag dev --wrap para capturar logs del dev server automáticamente${RESET}`)
   }
+  printNextSteps(bovedaDirName)
+}
+
+function printNextSteps(bovedaDirName) {
   console.log(`\n${CYAN}${BOLD}  💡 PRÓXIMOS PASOS RECOMENDADOS${RESET}`)
   console.log(`${CYAN}  ──────────────────────────${RESET}\n`)
   console.log(`  1️⃣  Explorar la bóveda:`)
@@ -289,6 +236,12 @@ async function upgrade(oldVersion, cwd, projectName) {
   // 1. AGENTS.md — merge via markers
   const agentsResult = getDryRun() ? 'simulado (dry-run)' : upgradeAgentsMd(cwd, TEMPLATE)
   changes.push(`📄 AGENTS.md — ${agentsResult}`)
+
+  // 1b. Enforcement Claude Code (hooks + CLAUDE.md + skill)
+  if (!getDryRun() && detectClaudeCode(cwd)) {
+    const { results } = installClaudeLayer(cwd, TEMPLATE)
+    changes.push(...results.map(r => `🛡️  ${r}`))
+  }
 
   // 2. Bóveda — skip (user territory)
   if (existingBoveda) {
@@ -338,7 +291,8 @@ async function upgrade(oldVersion, cwd, projectName) {
   }
 
   console.log(`\n${CYAN}${BOLD}  ──────────────────────────${RESET}`)
-  console.log(`${GREEN}${BOLD}  ✅ Proyecto actualizado a v${VERSION}${RESET}\n`)
+  console.log(`${GREEN}${BOLD}  ✅ Proyecto actualizado a v${VERSION}${RESET}`)
+  printNextSteps(bovedaDirName)
 }
 
 
@@ -395,6 +349,9 @@ async function main() {
   }
   if (subcommand === 'guide') {
     return cmdGuide(CWD, args.slice(1))
+  }
+  if (subcommand === 'enforce') {
+    return cmdEnforce(CWD, args.slice(1), TEMPLATE)
   }
   if (subcommand && (subcommand.startsWith('-') || subcommand.startsWith('--'))) {
     console.error(`${YELLOW}Opción no reconocida: ${subcommand}${RESET}`)

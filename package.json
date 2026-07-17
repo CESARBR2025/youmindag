@@ -1,6 +1,6 @@
 {
   "name": "youmindag",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "🧠 Inyecta inteligencia de contexto a cualquier proyecto. Una línea y tu AI coding tool entiende toda la arquitectura.",
   "bin": {
     "youmindag": "bin/run.mjs"
@@ -36,7 +36,7 @@
   ],
   "scripts": {
     "test": "node --test",
-    "lint": "eslint bin/run.mjs lib/*.mjs lib/commands/*.mjs",
+    "lint": "eslint bin/run.mjs lib/*.mjs lib/commands/*.mjs template/scripts/*.mjs template/.opencode/plugins/*.js",
     "verify": "npm run lint && npm test",
     "prepublishOnly": "npm run verify"
   },

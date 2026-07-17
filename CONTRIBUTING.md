@@ -75,6 +75,20 @@ describe('miFuncion', () => {
 })
 ```
 
+## Reglas duras (aprendidas de bugs reales)
+
+Estas convenciones no son opcionales — cada una corrige una clase de bug que ya se coló a producción:
+
+1. **Nunca interpoles input en un comando de shell.** Prohibido `execSync(\`... ${x} ...\`)` con datos que no controlas. Usa siempre `execFileSync` con un array de argumentos (ver `lib/exec.mjs`: `runGraphify`, `runNode`). El lint incluye una regla `no-restricted-syntax` que rechaza template literals dentro de llamadas `exec*`. Motivo: `youmindag architect '$(rm -rf ~)'` llegó a ejecutar el comando inyectado.
+
+2. **Un solo contrato JSONL.** Los archivos `.youmindag/*.jsonl` usan las claves `{ ts, key, text }` (sesiones) y `{ ts, sessionId, text }` (decisiones) — las que escribe `template/scripts/session-checkpoint.mjs`. La lectura pasa siempre por `lib/jsonl.mjs` (que tolera además el formato legacy `timestamp`/`decision`). Nunca leas esos archivos con `JSON.parse` ad-hoc esperando otras claves. Motivo: tres formatos divergentes hacían que el historial imprimiera `[?]` mientras los tests pasaban con fixtures del formato equivocado.
+
+3. **Los fixtures de test usan el formato canónico real**, no el que le conviene al lector. Un test que pasa con datos irreales es peor que no tener test.
+
+4. **Versión del paquete vs. versión instalada.** Para mostrar la versión del CLI usa `PKG_VERSION` de `lib/version.mjs`, nunca `readYoumindagVersion(cwd)` (esa es la versión instalada en el proyecto destino, y es `null` fuera de un proyecto).
+
+5. **Rutas de la bóveda con emoji** (`🧩 Features`) se resuelven con `resolveVaultEntry` (normaliza NFC/NFD) — macOS devuelve nombres en NFD y los literales del código están en NFC.
+
 ## Verificación contra un proyecto real
 
 Los cambios en `lib/commands/` o `template/` no solo se validan con `npm run verify` — se prueban corriendo el comando contra un proyecto Node real, no solo leyendo el código:

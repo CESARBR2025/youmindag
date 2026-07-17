@@ -15,7 +15,9 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
+
+const NPX_BIN = process.platform === "win32" ? "npx.cmd" : "npx";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
@@ -181,8 +183,8 @@ function graphifyQuery(task, directory) {
   const cached = cacheGet(task)
   if (cached) return cached
   try {
-    const escaped = task.replace(/"/g, '\\"').slice(0, 200);
-    const result = execSync(`npx graphify query "${escaped}" 2>/dev/null`, {
+    // execFileSync con array de args: el texto de la tarea jamás pasa por un shell
+    const result = execFileSync(NPX_BIN, ["graphify", "query", task.slice(0, 200)], {
       cwd: directory || ROOT,
       encoding: "utf-8",
       timeout: GRAPHIFY_TIMEOUT_MS,
@@ -257,8 +259,7 @@ function isGenericTask(text) {
 function checkpoint(key, text, directory) {
   if (!existsSync(CHECKPOINT_SCRIPT)) return;
   try {
-    const escaped = (text || "").replace(/"/g, '\\"').slice(0, 500);
-    execSync(`node "${CHECKPOINT_SCRIPT}" --append "${key}" "${escaped}"`, {
+    execFileSync(process.execPath, [CHECKPOINT_SCRIPT, "--append", key, (text || "").slice(0, 500)], {
       cwd: directory || ROOT,
       encoding: "utf-8",
       timeout: 5000,

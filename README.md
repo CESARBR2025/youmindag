@@ -109,12 +109,30 @@ npx tsc --noEmit + npm run build + npx graphify update
 
 ## 🤖 Compatibilidad
 
-| Herramienta | Soporte |
-|-------------|---------|
-| opencode | ✅ Plugin nativo |
-| Claude Code | ✅ Lee AGENTS.md + bóveda |
-| Cursor | ✅ Vía rules |
-| GitHub Copilot | ✅ Vía AGENTS.md |
+| Herramienta | Soporte | Enforcement |
+|-------------|---------|-------------|
+| opencode | ✅ Plugin nativo | Activo — inyecta contexto, deniega grep/glob a subagentes, checkpoints |
+| Claude Code | ✅ Hooks + CLAUDE.md + skill | **Activo** — hooks nativos (ver abajo) |
+| Cursor | ⚠️ Regla generada | Pasivo — `.cursor/rules/youmindag.mdc` si existe `.cursor/` |
+| GitHub Copilot | ⚠️ Solo AGENTS.md | Pasivo — el agente lee el archivo, sin interceptación |
+
+### 🛡️ Enforcement para Claude Code
+
+El texto en `AGENTS.md` es pasivo: el agente lo lee una vez y lo olvida. Para que **no pueda** saltarse el flujo, YouMindAG instala hooks nativos en `.claude/settings.json` (con merge idempotente que nunca pisa tu config):
+
+- **`PreToolUse` (Bash)** — detecta exploración cruda (`grep -r`, `rg`, `find -name`, `cat` de código fuente) y redirige a `youmindag references` / `youmindag architect`. Modos configurables en `.youmindag.json`: `"guard": "warn"` (default, sugiere), `"block"` (bloquea con exit 2) o `"off"`. Escape hatch puntual: `YM_NO_GUARD=1`.
+- **`SessionStart`** — inyecta al inicio de cada sesión el protocolo, los módulos de la bóveda, la antigüedad del grafo y las últimas decisiones.
+- **`PostToolUse` (Edit/Write)** — cada 10 ediciones recuerda `npx graphify update`.
+
+Se instala automáticamente si detecta `.claude/` o `CLAUDE.md`. Gestión manual:
+
+```bash
+youmindag enforce            # estado
+youmindag enforce --install  # instalar hooks + CLAUDE.md + skill
+youmindag enforce --uninstall # retirar solo las entradas youmindag
+```
+
+Todos los hooks son **fail-open**: ante cualquier error interno salen con código 0 y jamás dejan tu terminal sin Bash.
 
 <details>
 <summary><strong>🏛️ Ver la estructura completa que se inyecta</strong></summary>
@@ -171,8 +189,14 @@ mi-proyecto/
 | `youmindag trace --force` | Ignorar advertencia de cambios sin commit |
 | `youmindag references <simbolo>` | Buscar referencias de un símbolo en el código |
 | `youmindag context --load <modulo>` | Cargar contexto de un módulo |
+| `youmindag architect <modulo>` | Cargar contexto completo de un módulo (bóveda + grafo + historial) |
+| `youmindag architect <modulo> --json` | Ese contexto en formato JSON |
+| `youmindag doctor` | Diagnóstico completo del proyecto (`--json`, `--remote`) |
+| `youmindag history` | Sesiones y decisiones registradas (`--decisions`, `--recent`, `--filter`, `--json`) |
+| `youmindag guide` | Guía visual de la arquitectura YouMindAG |
+| `youmindag enforce` | Estado/instalación del enforcement para Claude Code (`--install`, `--uninstall`) |
 | `youmindag status` | Verificar estado de la bóveda |
-| `youmindag help` | Mostrar esta ayuda |
+| `youmindag help [comando]` | Mostrar ayuda (general o de un comando) |
 
 **Post-instalación:**
 
@@ -240,9 +264,9 @@ v2.9.0 modularizó los comandos (`db`, `dev`, `trace`, `watch`, `sync`) y dejó 
 
 ## 🛠️ Estado técnico
 
-**v2.9.3** — estable, con `prepublishOnly` corriendo lint + test antes de cada publish.
+**v2.11.0** — estable. El gate de publicación (`prepublishOnly` → `npm run verify`) corre lint + tests, y ahora el lint cubre también `template/scripts/` y el plugin de opencode (donde vive el código que corre en tu proyecto). Esta versión endurece el paquete: contrato JSONL único, versión del paquete siempre correcta, sanitización de shell (`execFileSync` con args, sin interpolación), curaduría del grafo, normalización unicode NFC/NFD, y la capa de enforcement para Claude Code.
 
-Pendiente conocido (alcance futuro, no bugs): auto-poblado limitado a proyectos Node/`package.json`, sin fallback si falla la instalación de Graphify, sin tests de casos límite extremos.
+Pendiente conocido (alcance futuro, no bugs): auto-poblado limitado a proyectos Node/`package.json`, sin fallback si falla la instalación de Graphify, atomicidad parcial en la instalación, sin soporte formal de Windows en los comandos `dev`.
 
 ## 🤝 Contribuir
 
