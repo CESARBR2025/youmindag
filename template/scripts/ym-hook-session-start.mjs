@@ -6,6 +6,54 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
+import { execFileSync } from 'child_process'
+
+const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|java|php|vue|svelte)$/
+const MAX_FEATURES_TO_CHECK = 30
+
+function parseComponentPaths(mdContent) {
+  const paths = new Set()
+  const re = /`([a-zA-Z0-9_./-]+)`/g
+  let m
+  while ((m = re.exec(mdContent))) {
+    if (CODE_EXT_RE.test(m[1])) paths.add(m[1])
+  }
+  return [...paths]
+}
+
+function gitLog1(cwd, pathspecs) {
+  try {
+    return String(execFileSync('git', ['log', '--oneline', '-1', '--', ...pathspecs], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
+    })).trim()
+  } catch { return '' }
+}
+
+// Compara, por feature, el último commit del doc contra el último commit de
+// los archivos exactos que su tabla `## Componentes` declara. No opina sobre
+// docs sin tabla parseable (mejor no decir nada que decir algo impreciso).
+function listStaleFeatures(cwd, featuresDir, mdFiles) {
+  if (!existsSync(join(cwd, '.git'))) return []
+  const stale = []
+  for (const file of mdFiles.slice(0, MAX_FEATURES_TO_CHECK)) {
+    try {
+      const docPath = join(featuresDir, file)
+      const content = readFileSync(docPath, 'utf-8')
+      const componentPaths = parseComponentPaths(content).filter(p => existsSync(join(cwd, p)))
+      if (componentPaths.length === 0) continue
+
+      const docLog = gitLog1(cwd, [docPath])
+      if (!docLog) continue
+      const sourceLog = gitLog1(cwd, componentPaths)
+      if (!sourceLog) continue
+
+      if (docLog.split(' ')[0] !== sourceLog.split(' ')[0]) {
+        stale.push(file.replace('.md', ''))
+      }
+    } catch { /* seguir con el siguiente doc */ }
+  }
+  return stale
+}
 
 function getBovedaDir(cwd) {
   try {
@@ -44,10 +92,16 @@ function main() {
     const featuresDir = resolveEntry(join(cwd, bovedaDir), '🧩 Features')
     if (existsSync(featuresDir)) {
       try {
-        const mods = readdirSync(featuresDir)
-          .filter(f => f.endsWith('.md') && f !== 'Index.md')
-          .map(f => f.replace('.md', ''))
+        const mdFiles = readdirSync(featuresDir).filter(f => f.endsWith('.md') && f !== 'Index.md')
+        const mods = mdFiles.map(f => f.replace('.md', ''))
         if (mods.length > 0) lines.push(`Módulos documentados: ${mods.slice(0, 20).join(', ')}`)
+
+        try {
+          const stale = listStaleFeatures(cwd, featuresDir, mdFiles)
+          if (stale.length > 0) {
+            lines.push(`Features posiblemente desactualizados (código cambió, doc no): ${stale.slice(0, 15).join(', ')}`)
+          }
+        } catch { /* no bloquear el resumen si esto falla */ }
       } catch {}
     }
   }

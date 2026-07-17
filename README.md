@@ -122,8 +122,10 @@ El texto en `AGENTS.md` es pasivo: el agente lo lee una vez y lo olvida. Para qu
 
 - **`PreToolUse` (Bash)** — detecta exploración cruda (`grep -r`, `rg`, `find -name`, `cat` de código fuente) y redirige a `youmindag references` / `youmindag architect`. Modos configurables en `.youmindag.json`: `"guard": "warn"` (default, sugiere), `"block"` (bloquea con exit 2) o `"off"`. Escape hatch puntual: `YM_NO_GUARD=1`.
 - **`PreToolUse` (Grep/Glob)** — las tools nativas de búsqueda de Claude Code no son "crudas" (son el diseño correcto), así que aquí nunca se bloquea: cada 5 búsquedas seguidas recuerda que `youmindag references`/`architect` traen además bóveda + grafo + historial, no solo el match.
-- **`SessionStart`** — inyecta al inicio de cada sesión el protocolo, los módulos de la bóveda, la antigüedad del grafo y las últimas decisiones.
-- **`PostToolUse` (Edit/Write)** — cada 10 ediciones lanza una sincronización **en background** (grafo + secciones auto-generables de la bóveda), no solo un recordatorio. El hook no espera al proceso — lo lanza desacoplado y sale de inmediato. Cooldown de 2 min entre corridas, recuperación automática de locks huérfanos. Desactivable con `"autoSync": false` en `.youmindag.json`. Nota: esto mantiene el *contenido* fresco, pero no commitea — el chequeo de bóveda desactualizada (ver abajo) sigue midiendo distancia en git log, eso requiere un commit deliberado.
+- **`SessionStart`** — inyecta al inicio de cada sesión el protocolo, los módulos de la bóveda, la antigüedad del grafo, las últimas decisiones, y ahora también **qué features de la bóveda están posiblemente desactualizados** (staleness por feature, ver abajo) — sin que nadie tenga que correr `doctor` para enterarse.
+- **`PostToolUse` (Edit/Write)** — dos mecanismos independientes en el mismo hook:
+  - Cada 10 ediciones lanza una sincronización **en background** (grafo + secciones auto-generables de la bóveda), no solo un recordatorio. El hook no espera al proceso — lo lanza desacoplado y sale de inmediato. Cooldown de 2 min entre corridas, recuperación automática de locks huérfanos. Desactivable con `"autoSync": false` en `.youmindag.json`.
+  - **En cada edición**: si el archivo tocado aparece en la tabla `## Componentes` de algún `Feature.md`, avisa (cooldown de 30 min por feature) para actualizar esa doc como parte del mismo cambio — el nudge llega al agente en el momento, no al usuario después. No reescribe nada: la prosa narrativa la sigue escribiendo un agente con contexto real, nunca un script en background sin supervisión (ver razonamiento abajo).
 
 ### 📐 Staleness por feature, no por repo
 
@@ -134,6 +136,8 @@ El texto en `AGENTS.md` es pasivo: el agente lo lee una vez y lo olvida. Para qu
 ```
 
 Si ningún Feature.md tiene tabla de Componentes parseable, cae de vuelta al chequeo global (impreciso, pero mejor que silencio total).
+
+Esta misma detección alimenta tanto `doctor`/`SessionStart` (te dice qué revisar) como el nudge de `PostToolUse` (te avisa en el momento exacto en que tocas el código relevante). Deliberadamente **no existe** un modo que reescriba la prosa sola en background: contenido "fuente de verdad" generado sin supervisión, si se equivoca, es peor que contenido honestamente desactualizado — el objetivo es que el humano/agente nunca tenga que *acordarse* de revisar, no que nadie *revise*.
 
 Se instala automáticamente si detecta `.claude/` o `CLAUDE.md`. Gestión manual:
 
