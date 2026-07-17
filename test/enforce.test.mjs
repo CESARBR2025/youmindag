@@ -196,3 +196,101 @@ describe('ym-hook-guard — Grep/Glob (nunca bloquea, solo recuerda)', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe('ym-hook-posttool (auto-sync en background)', () => {
+  const POSTTOOL = join(__dirname, '..', 'template', 'scripts', 'ym-hook-posttool.mjs')
+  const dir = join(process.cwd(), 'test', '__tmp_posttool__')
+
+  after(() => rmSync(dir, { recursive: true, force: true }))
+
+  function edit(cwd, extraEnv = {}) {
+    return spawnSync(process.execPath, [POSTTOOL], {
+      input: JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: 'x.ts' } }),
+      encoding: 'utf-8',
+      cwd,
+      env: { ...process.env, ...extraEnv },
+    })
+  }
+
+  function sleepMs(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  }
+
+  function stubBackgroundRunner(cwd, markerName) {
+    mkdirSync(join(cwd, 'scripts'), { recursive: true })
+    writeFileSync(join(cwd, 'scripts', 'ym-sync-background.mjs'), `
+      import { writeFileSync } from 'fs'
+      import { join } from 'path'
+      writeFileSync(join(process.argv[2], '${markerName}'), 'ran')
+    `)
+  }
+
+  function reset() {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({ version: '2.11.2' }))
+  }
+
+  it('no dispara nada antes de la 10ª edición', () => {
+    reset()
+    for (let i = 0; i < 9; i++) edit(dir)
+    assert.ok(!existsSync(join(dir, '.youmindag', 'sync.lock')), 'no debe haber lock antes de la 10ª edición')
+  })
+
+  it('en la 10ª edición crea el lock y lanza el runner (detached, no bloquea)', () => {
+    reset()
+    stubBackgroundRunner(dir, 'marker-1.txt')
+    for (let i = 0; i < 9; i++) edit(dir)
+
+    const start = Date.now()
+    const r = edit(dir)
+    const elapsed = Date.now() - start
+
+    assert.strictEqual(r.status, 0)
+    assert.ok(elapsed < 3000, `el hook debe salir rápido, no esperar al hijo (tardó ${elapsed}ms)`)
+
+    let sawMarker = false
+    for (let i = 0; i < 20 && !sawMarker; i++) {
+      sawMarker = existsSync(join(dir, 'marker-1.txt'))
+      if (!sawMarker) sleepMs(100)
+    }
+    assert.ok(sawMarker, 'el runner detached debió ejecutarse y escribir el marker')
+  })
+
+  it('respeta autoSync:false — cuenta pero no lanza nada', () => {
+    reset()
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({ autoSync: false }))
+    stubBackgroundRunner(dir, 'marker-2.txt')
+    for (let i = 0; i < 10; i++) edit(dir)
+    sleepMs(200)
+    assert.ok(!existsSync(join(dir, 'marker-2.txt')), 'autoSync:false no debe ejecutar el runner')
+    assert.ok(!existsSync(join(dir, '.youmindag', 'sync.lock')), 'autoSync:false no debe crear lock')
+  })
+
+  it('respeta el cooldown — no relanza si ya sincronizó hace poco', () => {
+    reset()
+    stubBackgroundRunner(dir, 'marker-3.txt')
+    mkdirSync(join(dir, '.youmindag'), { recursive: true })
+    writeFileSync(join(dir, '.youmindag', 'plugin-state.json'), JSON.stringify({ ymLastSyncAt: Date.now() }))
+    for (let i = 0; i < 10; i++) edit(dir)
+    sleepMs(200)
+    assert.ok(!existsSync(join(dir, 'marker-3.txt')), 'dentro del cooldown no debe relanzar')
+  })
+
+  it('recupera un lock huérfano (>5min) y vuelve a lanzar', () => {
+    reset()
+    stubBackgroundRunner(dir, 'marker-4.txt')
+    mkdirSync(join(dir, '.youmindag'), { recursive: true })
+    const old = Date.now() - 10 * 60 * 1000
+    writeFileSync(join(dir, '.youmindag', 'plugin-state.json'), JSON.stringify({ ymLastSyncAt: old }))
+    writeFileSync(join(dir, '.youmindag', 'sync.lock'), JSON.stringify({ startedAt: old, pid: 999999 }))
+    for (let i = 0; i < 10; i++) edit(dir)
+
+    let sawMarker = false
+    for (let i = 0; i < 20 && !sawMarker; i++) {
+      sawMarker = existsSync(join(dir, 'marker-4.txt'))
+      if (!sawMarker) sleepMs(100)
+    }
+    assert.ok(sawMarker, 'un lock huérfano viejo no debe impedir un nuevo sync')
+  })
+})
