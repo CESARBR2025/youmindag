@@ -28,10 +28,15 @@ describe('mergeClaudeSettings', () => {
     assert.ok(s.hooks.PreToolUse[0].hooks[0].command.includes('ym-hook-guard'))
   })
 
+  it('incluye matcher Grep|Glob además de Bash', () => {
+    const s = JSON.parse(readFileSync(join(TMP, '.claude', 'settings.json'), 'utf-8'))
+    assert.ok(s.hooks.PreToolUse.some(e => e.matcher === 'Grep|Glob'), 'debe incluir matcher Grep|Glob')
+  })
+
   it('es idempotente (2ª corrida no duplica)', () => {
     mergeClaudeSettings(TMP)
     const s = JSON.parse(readFileSync(join(TMP, '.claude', 'settings.json'), 'utf-8'))
-    assert.strictEqual(s.hooks.PreToolUse.length, 1, 'no debe duplicar entradas')
+    assert.strictEqual(s.hooks.PreToolUse.length, 2, 'una entrada por matcher (Bash + Grep|Glob), sin duplicar')
   })
 
   it('preserva hooks preexistentes del usuario', () => {
@@ -137,8 +142,57 @@ describe('ym-hook-guard (end-to-end)', () => {
     assert.strictEqual(r.status, 0)
   })
 
-  it('ignora herramientas que no son Bash (exit 0)', () => {
+  it('ignora herramientas que no son Bash/Grep/Glob (exit 0)', () => {
     const r = runGuard({ tool_name: 'Read', tool_input: { file_path: 'x' } })
     assert.strictEqual(r.status, 0)
+  })
+})
+
+describe('ym-hook-guard — Grep/Glob (nunca bloquea, solo recuerda)', () => {
+  function runGuardIn(dir, input, env = {}) {
+    return spawnSync(process.execPath, [GUARD], {
+      input: JSON.stringify(input),
+      encoding: 'utf-8',
+      env: { ...process.env, ...env },
+      cwd: dir,
+    })
+  }
+
+  it('nunca sale con código de bloqueo (2), incluso repetido muchas veces', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_search__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({ guard: 'block' }))
+    for (let i = 0; i < 8; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Grep', tool_input: { pattern: 'foo' } })
+      assert.notStrictEqual(r.status, 2, `Grep no debe bloquear jamás (intento ${i})`)
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('recuerda cada 5 búsquedas (additionalContext) y luego calla', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_search2__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({}))
+    const outputs = []
+    for (let i = 0; i < 5; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Glob', tool_input: { pattern: '**/*.ts' } })
+      outputs.push(r.stdout)
+    }
+    assert.ok(outputs.slice(0, 4).every(o => o === ''), 'las primeras 4 no deben emitir nada')
+    assert.ok(outputs[4].includes('YouMindAG'), 'la 5ª debe recordar el protocolo')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('respeta guard=off (nunca recuerda)', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_search3__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({ guard: 'off' }))
+    let sawReminder = false
+    for (let i = 0; i < 10; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Grep', tool_input: { pattern: 'foo' } })
+      if (r.stdout.includes('YouMindAG')) sawReminder = true
+    }
+    assert.strictEqual(sawReminder, false, 'guard=off no debe recordar nunca')
+    rmSync(dir, { recursive: true, force: true })
   })
 })

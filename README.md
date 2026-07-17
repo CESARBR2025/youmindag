@@ -121,6 +121,7 @@ npx tsc --noEmit + npm run build + npx graphify update
 El texto en `AGENTS.md` es pasivo: el agente lo lee una vez y lo olvida. Para que **no pueda** saltarse el flujo, YouMindAG instala hooks nativos en `.claude/settings.json` (con merge idempotente que nunca pisa tu config):
 
 - **`PreToolUse` (Bash)** — detecta exploración cruda (`grep -r`, `rg`, `find -name`, `cat` de código fuente) y redirige a `youmindag references` / `youmindag architect`. Modos configurables en `.youmindag.json`: `"guard": "warn"` (default, sugiere), `"block"` (bloquea con exit 2) o `"off"`. Escape hatch puntual: `YM_NO_GUARD=1`.
+- **`PreToolUse` (Grep/Glob)** — las tools nativas de búsqueda de Claude Code no son "crudas" (son el diseño correcto), así que aquí nunca se bloquea: cada 5 búsquedas seguidas recuerda que `youmindag references`/`architect` traen además bóveda + grafo + historial, no solo el match.
 - **`SessionStart`** — inyecta al inicio de cada sesión el protocolo, los módulos de la bóveda, la antigüedad del grafo y las últimas decisiones.
 - **`PostToolUse` (Edit/Write)** — cada 10 ediciones recuerda `npx graphify update`.
 
