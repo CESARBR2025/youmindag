@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-// YouMindAG — PreToolUse hook (Claude Code, matchers: Bash, Grep|Glob)
+// YouMindAG — PreToolUse hook (Claude Code, matchers: Bash, Grep|Glob, Read)
 //
 // Para Bash: detecta exploración cruda (grep -r, rg, find -name, cat de
 // código fuente) y redirige a los comandos de youmindag. Modos ("guard" en
 // .youmindag.json): "warn" (default) | "block" | "off". Escape hatch: YM_NO_GUARD=1.
 //
-// Para Grep/Glob (tools nativas de Claude Code): esas tools NO son "crudas"
-// — son el diseño correcto por defecto. Aquí no hay nada que bloquear; solo
-// se recuerda periódicamente (cada N usos) que `youmindag references` /
-// `youmindag architect` traen contexto curado (bóveda + grafo + historial)
-// además del match crudo. Nunca bloquea.
+// Para Grep/Glob/Read (tools nativas de Claude Code): esas tools NO son
+// "crudas" — son el diseño correcto por defecto. Aquí no hay nada que
+// bloquear; solo se recuerda periódicamente (cada N usos) que
+// `youmindag references` / `youmindag architect` traen contexto curado
+// (bóveda + grafo + historial) además del match/archivo crudo. Nunca
+// bloquea. Read solo cuenta si el archivo es código fuente (CODE_EXT_RE) —
+// leer la bóveda (.md) o config es exploración correcta, no un salto de
+// protocolo, así que no debe generar ruido.
 //
 // FAIL-OPEN: ante cualquier error interno sale con 0 — este hook jamás debe
 // dejar al usuario sin sus herramientas.
@@ -32,6 +35,8 @@ const CRUDE_PATTERNS = [
   /\bfind\b[^|&;]*\s-name\b/,
   /\bcat\b\s+[^|&;]*\b(src|lib|app|components|features)\//,
 ]
+
+const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rb|java|php|vue|svelte)$/
 
 const REMIND_EVERY_SEARCHES = 5
 
@@ -71,7 +76,7 @@ function handleBash(cwd, input, mode) {
   process.exit(0)
 }
 
-// Grep/Glob: nunca bloquea (no son "crudas", son las tools nativas
+// Grep/Glob/Read: nunca bloquea (no son "crudas", son las tools nativas
 // correctas). Solo cuenta usos y recuerda cada REMIND_EVERY_SEARCHES.
 function handleSearch(cwd) {
   const stateDir = join(cwd, '.youmindag')
@@ -91,8 +96,17 @@ function handleSearch(cwd) {
   state.ymSearchCount = 0
   try { mkdirSync(stateDir, { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2) + '\n') } catch {}
 
-  additionalContext('[YouMindAG] Varias búsquedas seguidas con Grep/Glob. Para exploración a nivel de arquitectura, `npx youmindag references <simbolo>` o `npx youmindag architect <modulo>` traen además bóveda + grafo + historial, no solo el match crudo.')
+  additionalContext('[YouMindAG] Varias exploraciones seguidas con Grep/Glob/Read sin pasar por youmindag. Para exploración a nivel de arquitectura, `npx youmindag references <simbolo>` o `npx youmindag architect <modulo>` traen además bóveda + grafo + historial, no solo el match/archivo crudo.')
   process.exit(0)
+}
+
+// Read: mismo criterio que Grep/Glob, pero solo cuenta si el archivo es
+// código fuente. Leer la bóveda (.md), configuración o el plan de plan-mode
+// es exploración correcta por diseño — nudge aquí sería ruido, no señal.
+function handleRead(cwd, input) {
+  const filePath = String((input.tool_input && input.tool_input.file_path) || '')
+  if (!filePath || !CODE_EXT_RE.test(filePath)) return ok()
+  return handleSearch(cwd)
 }
 
 function main() {
@@ -111,6 +125,7 @@ function main() {
 
   if (input.tool_name === 'Bash') return handleBash(cwd, input, mode)
   if (input.tool_name === 'Grep' || input.tool_name === 'Glob') return handleSearch(cwd)
+  if (input.tool_name === 'Read') return handleRead(cwd, input)
   return ok()
 }
 

@@ -33,10 +33,15 @@ describe('mergeClaudeSettings', () => {
     assert.ok(s.hooks.PreToolUse.some(e => e.matcher === 'Grep|Glob'), 'debe incluir matcher Grep|Glob')
   })
 
+  it('incluye matcher Read (nudge en lectura directa de código fuente)', () => {
+    const s = JSON.parse(readFileSync(join(TMP, '.claude', 'settings.json'), 'utf-8'))
+    assert.ok(s.hooks.PreToolUse.some(e => e.matcher === 'Read'), 'debe incluir matcher Read')
+  })
+
   it('es idempotente (2ª corrida no duplica)', () => {
     mergeClaudeSettings(TMP)
     const s = JSON.parse(readFileSync(join(TMP, '.claude', 'settings.json'), 'utf-8'))
-    assert.strictEqual(s.hooks.PreToolUse.length, 2, 'una entrada por matcher (Bash + Grep|Glob), sin duplicar')
+    assert.strictEqual(s.hooks.PreToolUse.length, 3, 'una entrada por matcher (Bash + Grep|Glob + Read), sin duplicar')
   })
 
   it('preserva hooks preexistentes del usuario', () => {
@@ -142,8 +147,8 @@ describe('ym-hook-guard (end-to-end)', () => {
     assert.strictEqual(r.status, 0)
   })
 
-  it('ignora herramientas que no son Bash/Grep/Glob (exit 0)', () => {
-    const r = runGuard({ tool_name: 'Read', tool_input: { file_path: 'x' } })
+  it('ignora herramientas que no son Bash/Grep/Glob/Read (exit 0)', () => {
+    const r = runGuard({ tool_name: 'Write', tool_input: { file_path: 'x' } })
     assert.strictEqual(r.status, 0)
   })
 })
@@ -193,6 +198,55 @@ describe('ym-hook-guard — Grep/Glob (nunca bloquea, solo recuerda)', () => {
       if (r.stdout.includes('YouMindAG')) sawReminder = true
     }
     assert.strictEqual(sawReminder, false, 'guard=off no debe recordar nunca')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('ym-hook-guard — Read (solo cuenta en código fuente, nunca bloquea)', () => {
+  function runGuardIn(dir, input, env = {}) {
+    return spawnSync(process.execPath, [GUARD], {
+      input: JSON.stringify(input),
+      encoding: 'utf-8',
+      env: { ...process.env, ...env },
+      cwd: dir,
+    })
+  }
+
+  it('nunca bloquea, incluso en modo block', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_read_block__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({ guard: 'block' }))
+    for (let i = 0; i < 8; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Read', tool_input: { file_path: 'lib/incidentes/actions.ts' } })
+      assert.notStrictEqual(r.status, 2, `Read no debe bloquear jamás (intento ${i})`)
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('recuerda cada 5 lecturas de código fuente y luego calla', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_read_remind__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({}))
+    const outputs = []
+    for (let i = 0; i < 5; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Read', tool_input: { file_path: `lib/oficial/repository${i}.ts` } })
+      outputs.push(r.stdout)
+    }
+    assert.ok(outputs.slice(0, 4).every(o => o === ''), 'las primeras 4 no deben emitir nada')
+    assert.ok(outputs[4].includes('YouMindAG'), 'la 5ª debe recordar el protocolo')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('no cuenta lecturas de la bóveda (.md) — no es exploración cruda', () => {
+    const dir = join(process.cwd(), 'test', '__tmp_guard_read_md__')
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.youmindag.json'), JSON.stringify({}))
+    let sawReminder = false
+    for (let i = 0; i < 10; i++) {
+      const r = runGuardIn(dir, { tool_name: 'Read', tool_input: { file_path: `boveda/🧩 Features/Reporte Campo.md` } })
+      if (r.stdout.includes('YouMindAG')) sawReminder = true
+    }
+    assert.strictEqual(sawReminder, false, 'leer .md de la bóveda no debe generar nudge')
     rmSync(dir, { recursive: true, force: true })
   })
 })
