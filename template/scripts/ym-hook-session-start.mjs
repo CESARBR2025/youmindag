@@ -86,6 +86,7 @@ function main() {
   const lines = []
   lines.push('[YouMindAG] Este proyecto tiene bóveda de contexto instalada.')
   lines.push('Protocolo: 1) `npx youmindag architect <modulo>` para contexto, 2) `npx youmindag references <simbolo>` en vez de grep, 3) `npx graphify update` tras editar código.')
+  lines.push('Ceremonia proporcional (ver AGENTS.md): T0 pregunta sin edición → sin relectura obligatoria; T1 micro-fix 1-2 archivos → typecheck puntual, sin graphify/bóveda manual; T2 feature/refactor real → checklist completo.')
 
   const bovedaDir = getBovedaDir(cwd)
   if (bovedaDir) {

@@ -1,17 +1,33 @@
-// context-loader OpenCode plugin — v2.5.0 Context Armor
+// context-loader OpenCode plugin — v2.13 Context Armor
 // Features:
 //   A) Auto checkpoint: registra tareas, build, typecheck, file_reads
-//   B) Graphify-first: ejecuta graphify query automáticamente
-//   C) Rules re-injection: recordatorio cada 12 tool calls
+//   B) Graphify-first: ejecuta graphify query automáticamente, SOLO si la
+//      tarea no clasifica como "trivial" (ver classifyTask/runTaskStartBurst)
+//   C) Rules re-injection: recordatorio cada REINJECT_EDIT_INTERVAL ediciones
+//      reales (edit/write), con techo de REINJECT_TOOLCALL_CEILING tool-calls
+//      para sesiones largas de solo lectura — antes era cada 12 tool-calls fijos
 //  F1) Verification reminder: sugiere build/typecheck cuando detecta edits sin verificación
 //  F2) Compaction recovery: re-inyecta reglas de oro si se pierde contexto
-//  F3) Token budget: monitorea uso estimado de tokens, advierte a >70%
+//  F3) Token budget: monitorea uso estimado de tokens, advierte a >70% — solo
+//      corre si la tarea no es trivial o ya hubo ediciones reales
 //  F4) Subagent suggestion: sugiere graphify/subagentes para investigación
 //  F5) Decision detection: detecta decisiones en output y sugiere loguearlas
 //  F6) Scope creep: advierte cuando tarea corta toca muchos archivos
 //  F7) Graphify stale guard: advierte cuando grafo no se ha actualizado tras 10+ edits
 //  D1) Pre-load enhanced: carga decisions pendientes + session summary al iniciar
 //
+// Ceremonia proporcional (v2.13): classifyTask() clasifica cada tarea nueva
+// como "trivial" | "substantial" | "unknown" (default = comportamiento
+// anterior, sin regresión). Las tareas "trivial" se saltan el burst de
+// contexto (checkpoint + session summary + graphify) hasta que editan código
+// de verdad — ver runTaskStartBurst() y el escalamiento perezoso en
+// tool.execute.before. Escape hatch: .youmindag.json → "ceremony": "strict"
+// restaura el comportamiento pre-v2.13 en todo momento.
+//
+// token-usage.jsonl queda apagado por defecto (TOKEN_LOG_ENABLED) — es una
+// herramienta manual de análisis (token-summary.mjs), nada del hot path
+// depende de ella. Activar con .youmindag.json → "tokenLog": true o
+// YOUMINDAG_TOKEN_LOG=1.
 import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -29,6 +45,22 @@ try {
     `[${new Date().toISOString()}] v2.5.4 loaded | ROOT=${ROOT} | __dirname=${__dirname}\n`);
 } catch {}
 
+function readYmConfig() {
+  try {
+    return JSON.parse(readFileSync(join(ROOT, ".youmindag.json"), "utf-8"));
+  } catch { return {}; }
+}
+const YM_CONFIG = readYmConfig();
+
+// Ceremonia proporcional al tamaño de tarea (ver AGENTS.md tiers T0/T1/T2).
+// "strict" restaura el comportamiento anterior a v2.13 (burst/reinject siempre completos).
+const FORCE_STRICT = YM_CONFIG.ceremony === "strict";
+
+// token-usage.jsonl es una herramienta manual de análisis (token-summary.mjs);
+// nada del hot path depende de ella — apagada por defecto, opt-in explícito.
+const TOKEN_LOG_ENABLED =
+  process.env.YOUMINDAG_TOKEN_LOG === "1" || YM_CONFIG.tokenLog === true;
+
 const TOKEN_LOG = join(ROOT, ".youmindag", "token-usage.jsonl")
 
 function estimateTokens(text) {
@@ -37,6 +69,7 @@ function estimateTokens(text) {
 }
 
 function logToken(data) {
+  if (!TOKEN_LOG_ENABLED) return
   try {
     mkdirSync(join(ROOT, ".youmindag"), { recursive: true })
     appendFileSync(TOKEN_LOG, JSON.stringify(data) + "\n")
@@ -45,7 +78,12 @@ function logToken(data) {
 
 const GRAPH_PATH = join(ROOT, ".graphify", "graph.json");
 const CHECKPOINT_SCRIPT = join(ROOT, "scripts", "session-checkpoint.mjs");
-const REINJECT_INTERVAL = 12;
+// v2.13: el reinject de GOLDEN_RULES pasó de "cada N tool-calls fijos" a
+// "cada N ediciones reales" (edit/write), con un techo de seguridad en
+// tool-calls totales para que las sesiones largas de solo lectura no se
+// queden sin recordatorio nunca. Ver REINJECT_EDIT_INTERVAL/CEILING abajo.
+const REINJECT_EDIT_INTERVAL = 6;
+const REINJECT_TOOLCALL_CEILING = 25;
 const BUDGET_CHECK_INTERVAL = 10;
 const VERIFY_WARN_AFTER = 5;
 const GRAPHIFY_STALE_AFTER = 10;
@@ -256,6 +294,28 @@ function isGenericTask(text) {
   return genericPatterns.test(text) && !specificPatterns.test(text);
 }
 
+// Clasifica el "peso" de una tarea para escalar el burst de contexto y el
+// reinject de reglas (ver AGENTS.md tiers T0/T1/T2). Sesgo deliberado:
+// "unknown" es el default y se trata igual que "substantial" (comportamiento
+// pre-v2.13, sin regresión) — solo se optimiza cuando hay señal clara de
+// trivialidad. Falsos negativos esperados (ej. "corrige el typo en la línea
+// 42 de foo.ts" cae en "unknown"): aceptable, es el caso seguro por defecto.
+// Falsos positivos en "trivial" (ej. "¿Por qué falla el build?") se corrigen
+// vía escalamiento perezoso en cuanto la tarea llama a edit/write — como
+// mucho se retrasa un tool-call, nunca se omite el burst en silencio.
+const TRIVIAL_TEXT_PATTERNS = /^(qu[ée]|c[oó]mo|cu[aá]l|cu[aá]ndo|d[oó]nde|por qu[ée]|explica|expl[ií]came|muestra|revisa|analiza|resume|what|how|why|where|explain|show)\b/i;
+const SUBSTANTIAL_TEXT_PATTERNS = /\b(implement|feature|refactor|migra|migration|nuevo m[oó]dulo|new module|endpoint nuevo|esquema|schema change|redise[ñn]|redesign)/i;
+
+function classifyTask(text) {
+  if (FORCE_STRICT) return "substantial";
+  if (!text) return "unknown";
+  const t = text.trim();
+  if (SUBSTANTIAL_TEXT_PATTERNS.test(t)) return "substantial";
+  if (t.length < 12) return "trivial";
+  if (TRIVIAL_TEXT_PATTERNS.test(t) || t.endsWith("?")) return "trivial";
+  return "unknown";
+}
+
 function checkpoint(key, text, directory) {
   if (!existsSync(CHECKPOINT_SCRIPT)) return;
   try {
@@ -360,6 +420,45 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
   let preLoaded = false;
   let currentUserText = "";
   let primarySessionID = null;
+  // Ceremonia proporcional: peso de la tarea actual, ediciones reales
+  // acumuladas y si ya se disparó el burst de contexto para esta tarea.
+  let taskWeight = "unknown";
+  let editsThisTask = 0;
+  let burstDoneForTask = false;
+  let editsSinceLastReinject = saved.editsSinceLastReinject || 0;
+  let toolCallsSinceReinject = 0;
+
+  // Burst de arranque de tarea (checkpoint + session summary + graphify).
+  // Extraído para poder invocarse tanto en isNewTask como en el
+  // escalamiento perezoso (una tarea "trivial" que termina editando).
+  function runTaskStartBurst(task, dir) {
+    checkpoint("task", task, dir);
+
+    const summary = sessionSummary(dir);
+    if (summary) {
+      pendingSession = summary;
+    }
+
+    const now = Date.now();
+    if (shouldShowGraphifyResult(task) && isGraphifyAvailable() && (now - lastGraphifyAt) > GRAPHIFY_DEBOUNCE_MS) {
+      lastGraphifyAt = now;
+      const keywords = extractKeywords(task);
+      const gfSummary = graphifySummary(dir);
+      let ctx = "";
+      if (gfSummary) {
+        ctx += `\n[graphify summary] Orientación del proyecto:\n${gfSummary}`;
+      }
+      if (!isGenericTask(task) && keywords.length > 0) {
+        const compoundQuery = buildGraphifyQuery(task, keywords);
+        const gfResult = graphifyQuery(compoundQuery, dir);
+        if (gfResult) {
+          graphifyQueryCount++;
+          ctx += `\n[graphify query] ${compoundQuery}\n${gfResult}`;
+        }
+      }
+      if (ctx) pendingContext = ctx;
+    }
+  }
 
   return {
     "chat.message": async (input, output) => {
@@ -399,9 +498,24 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
         if (YM_DEBUG) ymDebug(`grep/glob detectado tool:${toolName} sessionID:${input.sessionID} grepCount:${grepCount}`);
       }
 
+      // ─── Tool-agnostic: reinject + edit tracking para ceremonia proporcional ───
+      toolCallsSinceReinject++;
+      if (toolName === "edit" || toolName === "write") {
+        editsThisTask++;
+        editsSinceLastReinject++;
+        // Escalamiento perezoso: una tarea clasificada "trivial" que termina
+        // editando código dispara el burst diferido — como mucho se retrasa
+        // un tool-call, nunca se omite en silencio.
+        if (!burstDoneForTask && taskWeight === "trivial") {
+          taskWeight = "substantial";
+          runTaskStartBurst(lastTask, directory);
+          burstDoneForTask = true;
+        }
+      }
+
       // ─── Tool-agnostic: periodic state save ───
       if (toolCallCount % STATE_SAVE_INTERVAL === 0) {
-        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount });
+        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount, editsSinceLastReinject });
       }
 
       // ─── E1: Subagent graphify context injection ───
@@ -489,14 +603,23 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
         output.args.command = `echo ${GOLDEN_RULES} && ` + (output.args.command || "");
       }
 
-      // C: Regular rules re-injection
-      const reinjectMsg = toolCallCount > 2 && toolCallCount % REINJECT_INTERVAL === 0;
+      // C: Regular rules re-injection — por ediciones reales, no por conteo
+      // fijo de tool-calls. Techo de seguridad para sesiones largas de solo
+      // lectura (donde editsSinceLastReinject nunca sube).
+      const dueByEdits = editsSinceLastReinject >= REINJECT_EDIT_INTERVAL;
+      const dueByCeiling = toolCallsSinceReinject >= REINJECT_TOOLCALL_CEILING;
+      const reinjectMsg = toolCallCount > 2 && (dueByEdits || dueByCeiling);
       if (reinjectMsg) {
         output.args.command = `echo ${GOLDEN_RULES} && ` + (output.args.command || "");
+        editsSinceLastReinject = 0;
+        toolCallsSinceReinject = 0;
       }
 
-      // F3: Token budget check
-      if (toolCallCount % BUDGET_CHECK_INTERVAL === 0) {
+      // F3: Token budget check — solo si la tarea no es trivial o ya hubo
+      // ediciones reales; una sesión de puras preguntas no necesita
+      // spawnear un subproceso cada N tool-calls.
+      const dueForBudget = toolCallCount % BUDGET_CHECK_INTERVAL === 0 && (taskWeight !== "trivial" || editsThisTask > 0);
+      if (dueForBudget) {
         const budget = checkBudget(directory);
         if (budget) {
           const pctMatch = budget.match(/(\d+)%/);
@@ -511,40 +634,22 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
 
       if (isNewTask) {
         lastTask = task;
-        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount });
+        taskWeight = classifyTask(task);
+        editsThisTask = 0;
+        burstDoneForTask = false;
+        savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount, editsSinceLastReinject });
         pendingContext = "";
         pendingSession = "";
         pendingWarnings = "";
         lastCheckpointKey = "";
 
-        // A: Checkpoint the new task
-        checkpoint("task", task, directory);
-
-        // A: Fetch session summary
-        const summary = sessionSummary(directory);
-        if (summary) {
-          pendingSession = summary;
-        }
-
-        // B: Graphify-first v2 — query compuesta + summary (máx 2)
-        if (shouldShowGraphifyResult(task) && isGraphifyAvailable() && (now - lastGraphifyAt) > GRAPHIFY_DEBOUNCE_MS) {
-          lastGraphifyAt = now;
-          const keywords = extractKeywords(task);
-          const gfSummary = graphifySummary(directory);
-          let ctx = "";
-          if (gfSummary) {
-            ctx += `\n[graphify summary] Orientación del proyecto:\n${gfSummary}`;
-          }
-          // Para tasks específicas, también query compuesta con keywords
-          if (!isGenericTask(task) && keywords.length > 0) {
-            const compoundQuery = buildGraphifyQuery(task, keywords);
-            const gfResult = graphifyQuery(compoundQuery, directory);
-            if (gfResult) {
-              graphifyQueryCount++;
-              ctx += `\n[graphify query] ${compoundQuery}\n${gfResult}`;
-            }
-          }
-          if (ctx) pendingContext = ctx;
+        // Burst de arranque (checkpoint + session summary + graphify) solo
+        // si la tarea no clasifica como trivial — ver classifyTask() y
+        // AGENTS.md tiers T0/T1/T2. Tareas "trivial" que luego editan código
+        // disparan el burst diferido vía escalamiento perezoso (ver abajo).
+        if (taskWeight !== "trivial") {
+          runTaskStartBurst(task, directory);
+          burstDoneForTask = true;
         }
 
         // F4: Subagent suggestion for research-heavy tasks
@@ -653,7 +758,7 @@ export const ContextLoaderPlugin = async ({ project, client, $, directory, workt
           editsSinceLastCheck = 0;
           editsSinceGraphifyUpdate = 0;
           cacheClear();
-          savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount });
+          savePluginState({ toolCallCount, lastTask, lastCheckpointKey, editsSinceLastCheck, editsSinceGraphifyUpdate, grepCount, graphifyQueryCount, editsSinceLastReinject });
         }
       }
 

@@ -1,33 +1,43 @@
 <!-- BEGIN:youmindag -->
-# ⚡ Reglas de oro — leer antes de cada instrucción
+# ⚡ Reglas de oro — proporcionales al tamaño de la tarea
 
-1. 📖 **Leer AGENTS.md + `Home.md` de la bóveda + `.youmindag/session.jsonl`** siempre al recibir una nueva instrucción.
-   - La bóveda está en un directorio llamado `boveda-*` (ej: `boveda-seguridad-publica`) o `boveda`. Buscar el directorio antes de leer.
+Antes de actuar, clasifica la instrucción. Si dudas entre dos tiers, usa el más alto — el objetivo es no repetir trabajo que un hook ya hizo, no bajar la guardia.
 
-2. 🔎 **Graphify primero, grep después.** Si `.graphify/graph.json` existe:
+**T0 — Pregunta / diagnóstico sin edición de código** ("¿por qué...", "explica", "dónde está X", "revisa Y y dime qué ves")
+- No es obligatorio releer AGENTS.md + Home.md + `.youmindag/session.jsonl` completos. El hook de inicio de sesión ya inyecta módulos documentados, features posiblemente desactualizados, edad del grafo y últimas decisiones — es tu punto de partida.
+- Si necesitas más contexto de un tema puntual, abre solo la doc de bóveda relevante, no todo `Home.md`.
+
+**T1 — Micro-cambio** (1-2 archivos, sin archivos nuevos, sin cambio de contrato público/esquema — typo, ajuste de string, log, fix de una línea)
+- Verificación puntual: typecheck del módulo tocado. Build completo solo si el cambio toca algo compartido/exportado.
+- NO ejecutes `npx graphify update` a mano — el hook post-edición ya sincroniza grafo + bóveda estructural cada 10 ediciones en background. Solo corre el comando si necesitas el grafo al día *ahora mismo* (vas a hacer una query justo después).
+- NO toques la bóveda salvo que el hook te avise que el archivo está documentado, o el fix amerite una línea en `Troubleshooting.md`.
+
+**T2 — Feature / refactor real / cambio de esquema** (3+ archivos, módulo nuevo, contrato público nuevo, migración de BD, o el usuario pide explícitamente "feature"/"refactor"/"migra")
+- Lee `Home.md` + el `Feature.md` relevante antes de empezar.
+- Corre el Checklist post-cambio completo (sección más abajo).
+
+Si un T1 crece a 3+ archivos o toca algo compartido a mitad de tarea, trátalo como T2 desde ese punto — nunca al revés.
+
+1. 🔎 **Graphify primero, grep después.** Si `.graphify/graph.json` existe:
    - Para orientación rápida: `graphify summary --graph .graphify/graph.json`
-   - Para buscar archivos: `graphify query "..."` 
+   - Para buscar archivos: `graphify query "..."`
    - Para flujos entre módulos: `graphify path "A" "B"`
    - Si graphify no está disponible → `Estructura.md` en la bóveda como fallback
-
-3. 🗄 **BD real sobre documentación.** Si el proyecto tiene BD:
+2. 🗄 **BD real sobre documentación.** Si el proyecto tiene BD:
    - Consultar la BD real (credenciales en `Variables de Entorno.md` de la bóveda)
    - No adivinar esquemas ni confiar solo en la bóveda
-
-4. ✅ **Verificar cambios.** Al completar, ejecutar comandos de `Comandos.md` en la bóveda + `npx graphify update`
-
-5. 📁 **Ubicación de la bóveda.** La bóveda usa nombres como `boveda-seguridad-publica` o `boveda`. Todas las referencias a `boveda/` en este documento significan "buscar el directorio real de la bóveda en la raíz del proyecto".
+3. 📁 **Ubicación de la bóveda.** Nombres como `boveda-seguridad-publica` o `boveda`. Todas las referencias a `boveda/` en este documento significan "buscar el directorio real de la bóveda en la raíz del proyecto".
 
 ---
 
 # 🔧 Verificación y subagentes
 
-- Después de cada cambio, ejecutar verificación (build/lint/typecheck). **No esperar a que el usuario lo pida.**
+- Verificación proporcional al tier (ver arriba): T0 ninguna, T1 typecheck puntual, T2 build+lint+typecheck completos. No esperar a que el usuario lo pida.
 - Para investigación del código base, usar `graphify query` o subagentes. **No leer archivos masivamente.**
 - Si el contexto se compacta, ejecutar `node scripts/session-checkpoint.mjs --summary` para recuperar el hilo.
 - Monitorear presupuesto de tokens: `node scripts/session-checkpoint.mjs --budget`.
-- Si el scope de la tarea crece más de lo previsto (muchos archivos para tarea pequeña), **pausar y consultar al usuario** antes de seguir.
-- Después de 10+ file edits, ejecutar `npx graphify update` para mantener el grafo sincronizado.
+- Si el scope de la tarea crece más de lo previsto, **pausar y consultar al usuario** antes de seguir — esto también es la señal de subir de T1 a T2.
+- El grafo se sincroniza solo cada 10 ediciones vía hook — no lo dupliques a mano; usa `npx graphify update` solo si necesitas el grafo al día de inmediato.
 - Registrar decisiones técnicas importantes: `node scripts/session-checkpoint.mjs --decision "..."`
 
 ---
@@ -54,7 +64,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # Bóveda de Conocimiento
 
-**Antes de cualquier cambio, leer `Home.md` en la bóveda para contexto completo del proyecto.**
+**Antes de un cambio T2 (feature/refactor real), leer `Home.md` en la bóveda para contexto completo del proyecto.** Para T0/T1, el resumen del hook de inicio de sesión es suficiente.
 La bóveda (directorio `boveda-*` o `boveda`) es la única fuente de documentación. No crear documentación suelta fuera de ella.
 
 El archivo `.opencode/context-map.yaml` mapea cada dominio del proyecto a sus archivos relevantes, documentación y query de Graphify. Usarlo para cargar contexto en una tarea nueva.
@@ -137,19 +147,20 @@ export async function obtenerAlgo(id: string) {
 
 # Checklist post-cambio
 
-Al completar cualquier cambio (nueva feature, bugfix, refactor):
+**T1 — micro-fix (1-2 archivos, sin contrato/esquema nuevo):**
+1. Typecheck del módulo tocado (o build si el cambio es compartido/exportado).
+2. Nada más es obligatorio — el hook post-edición ya cubre el nudge de doc y el sync de grafo/bóveda.
 
+**T2 — feature nueva / refactor real / cambio de esquema:**
 1. **TypeCheck**: `npx tsc --noEmit` (o equivalente del lenguaje)
 2. **Build**: `npm run build` (o equivalente)
-3. **Si el módulo es nuevo**: crear `boveda/🧩 Features/[nombre].md` + actualizar `Index.md`
-4. **Actualizar bóveda**:
-   - Feature nueva → `boveda/🧩 Features/[nombre].md`
-   - Bug fix → agregar entrada en `boveda/🗺 Roadmap/Troubleshooting.md`
-   - Cambio en BD → actualizar `boveda/📦 Datos/Esquema BD.md`
+3. **Bóveda**:
+   - Feature nueva → crear `boveda/🧩 Features/[nombre].md` + actualizar `Index.md`
+   - Bug fix no trivial → agregar entrada en `boveda/🗺 Roadmap/Troubleshooting.md`
+   - Cambio en BD → actualizar `boveda/📦 Datos/Esquema BD.md` + `npm run db:schema`
    - Decisión técnica → ADR en `boveda/🏗 Arquitectura/Decisiones.md`
-5. **Verificar nomenclatura**: consistencia con el resto del proyecto
-6. **Graphify**: `npx graphify update` para mantener el grafo sincronizado
-7. **Si hay cambios en BD**: `npm run db:schema` para refrescar esquema
+4. **Verificar nomenclatura**: consistencia con el resto del proyecto
+5. **Graphify**: `npx graphify update` — fuerza el grafo al día ahora (el hook lo haría en background de todas formas, pero conviene tenerlo inmediato al cerrar una feature)
 
 ## graphify
 
